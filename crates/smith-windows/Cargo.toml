@@ -3,7 +3,7 @@ name = "smith-windows"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "Windows UI Automation tools (Click, Find, InputText, Process, SetText, Wait) for the Smith agent framework"
+description = "Windows UI Automation tools (Click, Find, InputText, Process, SetText, Wait, Extract, Screenshot) for the Smith agent framework"
 repository = "https://github.com/as-kurosss/smith-rpa.git"
 
 [dependencies]
@@ -16,4 +16,4 @@ tokio-util.workspace = true
 tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]
-uiautomation = "0.25.0"
+uiautomation = { version = "0.25.0", features = ["screenshot"] }

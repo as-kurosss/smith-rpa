@@ -1,0 +1,15 @@
+[package]
+name = "smith-cli"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "CLI for running and validating smith-rpa robots (linear executor over ToolRegistry)"
+repository = "https://github.com/as-kurosss/smith-rpa.git"
+
+[dependencies]
+smith-engine = { version = "0.1.0", path = "../smith-engine" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
