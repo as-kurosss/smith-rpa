@@ -1,0 +1,20 @@
+[package]
+name = "smith-orchestrator"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Run manager for smith-rpa robots: submit, cancel via CancellationToken, ExecutionReport history"
+repository = "https://github.com/as-kurosss/smith-rpa.git"
+
+[dependencies]
+smith-core = { version = "0.1.0", path = "../smith-core" }
+smith-engine = { version = "0.1.0", path = "../smith-engine" }
+thiserror = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+serde_json = { workspace = true }

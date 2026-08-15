@@ -4,6 +4,7 @@ members = [
     "crates/smith-core",
     "crates/smith-windows",
     "crates/smith-engine",
+    "crates/smith-orchestrator",
     "crates/smith-cli",
     "apps/selector-capture",
 ]

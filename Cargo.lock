@@ -1700,6 +1700,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "smith-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "smith-core",
+ "smith-engine",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "smith-windows"
 version = "0.1.0"
 dependencies = [
