@@ -1,0 +1,24 @@
+[package]
+name = "selector-capture"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "UI element selector capture utility for the Smith agent framework"
+repository = "https://github.com/as-kurosss/smith-rpa.git"
+
+[features]
+default = ["windows"]
+windows = []
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(windows)'.dependencies]
+uiautomation = "0.25"
+rdev = "0.5"
+windows = { version = "0.62", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+arboard = { version = "3" }

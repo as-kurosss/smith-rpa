@@ -1,0 +1,17 @@
+[package]
+name = "smith-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Core traits and types for the Smith agent framework — Tool trait, ExecutionContext, SmithError"
+repository = "https://github.com/as-kurosss/smith-rpa.git"
+
+[dependencies]
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

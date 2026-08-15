@@ -1,0 +1,40 @@
+/target
+
+# Generated graphify artifacts
+smith-graphify/cache/
+smith-graphify/html/
+smith-graphify/graph.html
+smith-graphify/graph.svg
+smith-graphify/graph.cypher
+smith-graphify/graph.graphml
+smith-graphify/graph.json
+smith-graphify/GRAPH_REPORT.md
+
+# Build artifacts
+apps/*/target/
+
+# Standalone utility (not part of the automation project)
+apps/smith-context/
+
+# AI agent skill files (user-local configuration)
+.agents/
+AGENTS.md
+
+# Generated graph artifacts (regenerate with graphify-rs build)
+smith-graphify/
+
+# Local Cargo config
+.cargo/
+
+# Environment variables (user-local, contains secrets)
+.env
+.env.local
+
+# Server runtime data
+smith-data/
+
+# Node.js dependencies
+node_modules/
+
+# Build output
+dist/
