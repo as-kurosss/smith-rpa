@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Background,
   Controls,
@@ -12,6 +13,7 @@ import {
 import { ActionNode } from "./components/ActionNode";
 import { NodePalette } from "./components/NodePalette";
 import { PropertyPanel } from "./components/PropertyPanel";
+import { RunLogs } from "./components/RunLogs";
 import { Toolbar } from "./components/Toolbar";
 import {
   NODE_ROW_HEIGHT,
@@ -23,7 +25,7 @@ import {
   sortedNodes,
   stepData,
 } from "./lib/robot";
-import type { StepParams, ToolDef } from "./types";
+import type { ExecutionReportView, JobView, StepParams, ToolDef } from "./types";
 
 // Типы узлов React Flow (должны быть стабильными ссылками).
 const nodeTypes = { action: ActionNode };
@@ -39,6 +41,11 @@ export default function App() {
   const [version, setVersion] = useState(DEFAULT_VERSION);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState("Готово");
+  const [currentJobId, setCurrentJobId] = useState<number | null>(null);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [report, setReport] = useState<ExecutionReportView | null>(null);
+  const [history, setHistory] = useState<JobView[]>([]);
+  const [runError, setRunError] = useState<string | null>(null);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
@@ -148,10 +155,72 @@ export default function App() {
     reader.readAsText(file);
   }, []);
 
-  const handleRun = useCallback(() => {
-    // Реализация запуска через smith-orchestrator добавляется в M5.
-    setStatus("Запуск будет доступен после интеграции с движком");
+  const isTerminal = (s: string | null): boolean =>
+    s === "succeeded" || s === "failed" || s === "cancelled";
+
+  const refreshHistory = useCallback(() => {
+    invoke<JobView[]>("get_history")
+      .then((jobs) => setHistory(jobs))
+      .catch((error: unknown) => setRunError(String(error)));
   }, []);
+
+  const handleRun = useCallback(async () => {
+    const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
+    setRunError(null);
+    try {
+      const id = await invoke<number>("run_robot", { json: serializeRobot(robot) });
+      setCurrentJobId(id);
+      setJobStatus("queued");
+      setReport(null);
+      setStatus(`Робот запущен: #${id}`);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error));
+      setStatus("Ошибка запуска");
+    }
+  }, [nodes, robotName, version]);
+
+  const handleCancel = useCallback(async () => {
+    if (currentJobId === null) {
+      return;
+    }
+    try {
+      await invoke("cancel_job", { id: currentJobId });
+      setStatus(`Отмена запрошена: #${currentJobId}`);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentJobId]);
+
+  // Опрос состояния запуска, пока джоб не завершён.
+  useEffect(() => {
+    if (currentJobId === null) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      invoke<JobView | null>("get_job", { id: currentJobId })
+        .then((job) => {
+          if (job === null) {
+            return;
+          }
+          setJobStatus(job.status);
+          if (job.report) {
+            setReport(job.report);
+          }
+          if (isTerminal(job.status)) {
+            setCurrentJobId(null);
+            setStatus(`Запуск #${job.id}: ${job.status}`);
+            refreshHistory();
+          }
+        })
+        .catch((error: unknown) => setRunError(String(error)));
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [currentJobId, refreshHistory]);
+
+  // История запусков при старте студии.
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   return (
     <div className="flex h-full flex-col">
@@ -163,8 +232,9 @@ export default function App() {
         onSave={handleSave}
         onLoad={handleLoad}
         onRun={handleRun}
+        onCancel={handleCancel}
         canRun={nodes.length > 0}
-        running={false}
+        running={currentJobId !== null}
       />
 
       {loadError && (
@@ -199,6 +269,14 @@ export default function App() {
           onMove={moveStep}
         />
       </div>
+
+      {runError && (
+        <div className="border-t border-red-200 bg-red-50 px-4 py-1 text-sm text-red-700">
+          Ошибка запуска: {runError}
+        </div>
+      )}
+
+      <RunLogs jobStatus={jobStatus} report={report} history={history} />
 
       <footer className="border-t border-slate-200 bg-white px-4 py-1 text-xs text-slate-500">
         {status} · {nodes.length} шагов

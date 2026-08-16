@@ -28,3 +28,26 @@ export interface ToolDef {
   description: string;
   defaultParams: StepParams;
 }
+
+/** Результат одного шага из ExecutionReport. */
+export interface StepLog {
+  action: string;
+  ok: boolean;
+  output?: unknown;
+  error?: string;
+}
+
+/** Итоговый отчёт о запуске (smith-engine ExecutionReport). */
+export interface ExecutionReportView {
+  robot_name: string;
+  status: string;
+  steps: StepLog[];
+}
+
+/** Запись запуска из smith-orchestrator (Job). */
+export interface JobView {
+  id: number;
+  robot_name: string;
+  status: string;
+  report: ExecutionReportView | null;
+}

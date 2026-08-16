@@ -8,6 +8,7 @@ interface ToolbarProps {
   onSave: () => void;
   onLoad: (file: File) => void;
   onRun: () => void;
+  onCancel: () => void;
   canRun: boolean;
   running: boolean;
 }
@@ -21,6 +22,7 @@ export function Toolbar({
   onSave,
   onLoad,
   onRun,
+  onCancel,
   canRun,
   running,
 }: ToolbarProps) {
@@ -76,6 +78,15 @@ export function Toolbar({
         >
           Сохранить JSON
         </button>
+        {running && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
+          >
+            Отменить
+          </button>
+        )}
         <button
           type="button"
           onClick={onRun}

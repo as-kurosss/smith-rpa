@@ -3645,6 +3645,7 @@ dependencies = [
  "serde_json",
  "smith-core",
  "smith-engine",
+ "smith-orchestrator",
  "tauri",
  "tauri-build",
 ]

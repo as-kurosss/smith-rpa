@@ -4,10 +4,17 @@
 mod commands;
 
 fn main() {
+    let orchestrator = smith_orchestrator::Orchestrator::new(smith_engine::default_registry());
+
     let result = tauri::Builder::default()
+        .manage(orchestrator)
         .invoke_handler(tauri::generate_handler![
             commands::health,
-            commands::parse_robot
+            commands::parse_robot,
+            commands::run_robot,
+            commands::cancel_job,
+            commands::get_job,
+            commands::get_history
         ])
         .run(tauri::generate_context!());
 
