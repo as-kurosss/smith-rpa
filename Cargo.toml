@@ -7,6 +7,7 @@ members = [
     "crates/smith-orchestrator",
     "crates/smith-cli",
     "apps/selector-capture",
+    "apps/smith-studio/src-tauri",
 ]
 
 [workspace.lints.clippy]

@@ -1,0 +1,17 @@
+[package]
+name = "smith-studio"
+version = "0.1.0"
+description = "Smith RPA Studio — visual robot editor and runner"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/as-kurosss/smith-rpa.git"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smith-core = { version = "0.1.0", path = "../../../crates/smith-core" }
+smith-engine = { version = "0.1.0", path = "../../../crates/smith-engine" }
