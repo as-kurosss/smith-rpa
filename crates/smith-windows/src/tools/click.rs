@@ -6,8 +6,6 @@ use serde_json::{Value, json};
 use smith_core::{ExecutionContext, Tool, ToolError};
 use tokio_util::sync::CancellationToken;
 
-use crate::element::SafeUIElement;
-
 // ---------------------------------------------------------------------------
 // Typed input/output (§2.1)
 // ---------------------------------------------------------------------------
@@ -16,7 +14,15 @@ use crate::element::SafeUIElement;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClickInput {
     /// Key in `ExecutionContext` containing the `SafeUIElement`.
-    pub element_key: String,
+    pub element_key: Option<String>,
+    /// Element name to find (if element_key not set).
+    pub name: Option<String>,
+    /// UI Automation identifier.
+    pub automation_id: Option<String>,
+    /// Control type (e.g. Button, Edit, Window).
+    pub control_type: Option<String>,
+    /// Window class name.
+    pub class_name: Option<String>,
     /// Optional delay before execution in milliseconds.
     #[serde(default)]
     pub delay_before_ms: Option<u64>,
@@ -62,9 +68,8 @@ impl Tool for ClickTool {
     }
 
     fn description(&self) -> &'static str {
-        "Performs a click on a UI element stored in the execution context"
+        "Performs a click on a UI element by context key or inline selector"
     }
-
     fn schema(&self) -> Value {
         json!({
             "type": "object",
@@ -72,6 +77,22 @@ impl Tool for ClickTool {
                 "element_key": {
                     "type": "string",
                     "description": "Key in ExecutionContext containing the UIElement"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Element name to find (if element_key not set)"
+                },
+                "automation_id": {
+                    "type": "string",
+                    "description": "UI Automation identifier (if element_key not set)"
+                },
+                "control_type": {
+                    "type": "string",
+                    "description": "Control type (if element_key not set)"
+                },
+                "class_name": {
+                    "type": "string",
+                    "description": "Window class name (if element_key not set)"
                 },
                 "delay_before_ms": {
                     "type": "integer",
@@ -84,7 +105,7 @@ impl Tool for ClickTool {
                     "description": "Delay after execution in milliseconds"
                 }
             },
-            "required": ["element_key"]
+            "required": []
         })
     }
 
@@ -109,17 +130,25 @@ impl Tool for ClickTool {
             }
         }
 
-        // 2. Retrieve element from context
-        let value = ctx.get(&input.element_key).ok_or_else(|| {
-            ToolError::invalid_input(
-                format!("Key '{}' not found in context", input.element_key),
-                Some("element_key".into()),
+        // 2. Resolve element from context key or inline selector
+        let element = super::resolve::resolve_element(
+            input.element_key.as_deref(),
+            super::resolve::SelectorFields {
+                name: input.name.as_deref(),
+                automation_id: input.automation_id.as_deref(),
+                control_type: input.control_type.as_deref(),
+                class_name: input.class_name.as_deref(),
+            },
+            ctx,
+        )
+        .await?
+        .ok_or_else(|| {
+            ToolError::element_not_found(
+                "No element found: provide element_key or selector fields".to_string(),
                 None,
             )
         })?;
-
-        let wrapper = value.try_as_custom::<SafeUIElement>()?;
-        let element_clone = wrapper.clone();
+        let element_clone = element.clone();
 
         // 3. Use spawn_blocking for COM calls (§5.3)
         tokio::task::spawn_blocking(move || {

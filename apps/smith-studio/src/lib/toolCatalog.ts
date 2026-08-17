@@ -5,8 +5,8 @@ export const TOOL_CATALOG: ToolDef[] = [
   {
     name: "windows.click",
     label: "Click",
-    description: "Клик по элементу, сохранённому в контексте",
-    defaultParams: { element_key: "" },
+    description: "Клик по элементу (по ключу или селектору)",
+    defaultParams: {},
     outputs: [],
   },
   {
@@ -59,7 +59,7 @@ export const TOOL_CATALOG: ToolDef[] = [
     name: "windows.extract",
     label: "Extract",
     description: "Прочитать текст (name/value) элемента",
-    defaultParams: { element_key: "", property: "name" },
+    defaultParams: { property: "name" },
     outputs: [
       {
         name: "text",

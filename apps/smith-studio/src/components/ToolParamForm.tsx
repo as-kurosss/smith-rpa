@@ -107,13 +107,13 @@ const TOOL_SCHEMAS: Record<string, FieldDef[]> = {
   ],
 
   "windows.extract": [
-    { key: "element_key", label: "Ключ элемента", type: "text", placeholder: "my_element", required: true },
+    ...SELECTOR_FIELDS,
     { key: "property", label: "Свойство", type: "select", options: ["", "name", "value"] },
   ],
 
   "windows.screenshot": [
     { key: "path", label: "Путь к PNG", type: "text", placeholder: "C:\\screenshots\\shot.png", required: true },
-    { key: "element_key", label: "Ключ элемента", type: "text", placeholder: "(пусто = весь экран)" },
+    ...SELECTOR_FIELDS,
   ],
 
   "http.request": [

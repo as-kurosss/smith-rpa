@@ -1,0 +1,16 @@
+{
+  "name": "My robot",
+  "version": "1.0",
+  "steps": [
+    {
+      "action": "windows.process",
+      "params": {
+        "action": "start",
+        "command": "notepad.exe"
+      },
+      "outputs": {
+        "pid": "notepad"
+      }
+    }
+  ]
+}
