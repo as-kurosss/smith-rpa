@@ -2,20 +2,21 @@ import type { Node } from "@xyflow/react";
 import type { ActionNodeData, RobotModel, RobotStep, StepParams } from "../types";
 
 /** Вертикальный отступ между узлами при авто-раскладке. */
-export const NODE_ROW_HEIGHT = 120;
+export const NODE_ROW_HEIGHT = 100;
 
 /** Создаёт узел шага робота. */
 export function makeStepNode(
   index: number,
   action: string,
   params: StepParams,
+  outputs: Record<string, string>,
   position: { x: number; y: number }
 ): Node {
   return {
     id: `step-${index}`,
     type: "action",
     position,
-    data: { index, action, params } satisfies ActionNodeData,
+    data: { index, action, params, outputs } satisfies ActionNodeData,
   };
 }
 
@@ -32,7 +33,7 @@ export function sortedNodes(nodes: Node[]): Node[] {
 /** Робот -> узлы (вертикальная раскладка). */
 export function robotToNodes(robot: RobotModel): Node[] {
   return robot.steps.map((step, index) =>
-    makeStepNode(index, step.action, step.params, {
+    makeStepNode(index, step.action, step.params, step.outputs ?? {}, {
       x: 40,
       y: 80 + index * NODE_ROW_HEIGHT,
     })
@@ -43,7 +44,11 @@ export function robotToNodes(robot: RobotModel): Node[] {
 export function nodesToRobot(name: string, version: string, nodes: Node[]): RobotModel {
   const steps: RobotStep[] = sortedNodes(nodes).map((node) => {
     const data = stepData(node);
-    return { action: data.action, params: data.params };
+    const step: RobotStep = { action: data.action, params: data.params };
+    if (Object.keys(data.outputs).length > 0) {
+      step.outputs = data.outputs;
+    }
+    return step;
   });
   return { name, version, steps };
 }
@@ -78,7 +83,11 @@ export function parseRobot(json: string): RobotModel {
       typeof step.params === "object" && step.params !== null
         ? (step.params as StepParams)
         : {};
-    return { action: step.action, params };
+    const outputs =
+      typeof step.outputs === "object" && step.outputs !== null
+        ? (step.outputs as Record<string, string>)
+        : {};
+    return { action: step.action, params, outputs };
   });
   return { name: obj.name, version: obj.version, steps };
 }

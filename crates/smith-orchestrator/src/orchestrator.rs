@@ -303,6 +303,7 @@ mod tests {
                 .map(|(action, params)| smith_engine::Step {
                     action: (*action).to_string(),
                     params: params.clone(),
+                    outputs: Default::default(),
                 })
                 .collect(),
         }

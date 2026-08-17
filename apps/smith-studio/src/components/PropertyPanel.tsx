@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import type { Node } from "@xyflow/react";
 import { stepData } from "../lib/robot";
+import { TOOL_CATALOG } from "../lib/toolCatalog";
 import type { StepParams } from "../types";
 
 interface PropertyPanelProps {
   node: Node | null;
-  onUpdate: (id: string, action: string, params: StepParams) => void;
+  onUpdate: (
+    id: string,
+    action: string,
+    params: StepParams,
+    outputs: Record<string, string>
+  ) => void;
   onDelete: (id: string) => void;
   onMove: (id: string, delta: -1 | 1) => void;
 }
@@ -41,14 +47,27 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
         throw new Error("Параметры должны быть JSON-объектом");
       }
       setParamsError(null);
-      onUpdate(node.id, data.action, parsed as StepParams);
+      onUpdate(node.id, data.action, parsed as StepParams, data.outputs);
     } catch (error) {
       setParamsError(error instanceof Error ? error.message : String(error));
     }
   };
 
   const handleActionChange = (action: string) => {
-    onUpdate(node.id, action, data.params);
+    onUpdate(node.id, action, data.params, data.outputs);
+  };
+
+  const tool = TOOL_CATALOG.find((t) => t.name === data.action);
+  const outputDefs = tool?.outputs ?? [];
+
+  const handleOutputChange = (field: string, varName: string) => {
+    const outputs = { ...data.outputs };
+    if (varName.trim() === "") {
+      delete outputs[field];
+    } else {
+      outputs[field] = varName.trim();
+    }
+    onUpdate(node.id, data.action, data.params, outputs);
   };
 
   return (
@@ -75,6 +94,33 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
         }`}
       />
       {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+
+      <div className="mb-4">
+        <label className="mb-1 block text-sm font-medium text-slate-700">Выходы</label>
+        {outputDefs.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            Этот инструмент не возвращает значений.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {outputDefs.map((output) => (
+              <div key={output.name}>
+                <label className="mb-0.5 block font-mono text-xs text-slate-500">
+                  {output.name}{" "}
+                  <span className="text-slate-400">({output.type})</span>
+                </label>
+                <input
+                  value={data.outputs[output.name] ?? ""}
+                  onChange={(e) => handleOutputChange(output.name, e.target.value)}
+                  placeholder="имя переменной"
+                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 font-mono text-xs"
+                />
+                <p className="mt-0.5 text-[10px] text-slate-400">{output.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="mt-4 flex gap-2">
         <button

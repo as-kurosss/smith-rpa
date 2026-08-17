@@ -75,20 +75,23 @@ export default function App() {
       const position = last
         ? { x: last.position.x, y: last.position.y + NODE_ROW_HEIGHT }
         : { x: 40, y: 80 };
-      return [...nds, makeStepNode(nextIndex, tool.name, tool.defaultParams, position)];
+      return [...nds, makeStepNode(nextIndex, tool.name, tool.defaultParams, {}, position)];
     });
     setStatus(`Добавлен шаг: ${tool.name}`);
   }, []);
 
-  const updateStep = useCallback((id: string, action: string, params: StepParams) => {
-    setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? { ...node, data: { ...stepData(node), action, params } }
-          : node
-      )
-    );
-  }, []);
+  const updateStep = useCallback(
+    (id: string, action: string, params: StepParams, outputs: Record<string, string>) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === id
+            ? { ...node, data: { ...stepData(node), action, params, outputs } }
+            : node
+        )
+      );
+    },
+    []
+  );
 
   const moveStep = useCallback((id: string, delta: -1 | 1) => {
     setNodes((nds) => {

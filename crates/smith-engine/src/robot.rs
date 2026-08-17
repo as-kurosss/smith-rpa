@@ -1,5 +1,7 @@
 //! Модель робота: `Robot` — список шагов, каждый шаг — вызов инструмента.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -13,12 +15,17 @@ pub struct Robot {
     pub steps: Vec<Step>,
 }
 
-/// Один шаг: имя инструмента (`action`) + параметры (`params`).
+/// Один шаг: имя инструмента (`action`) + параметры (`params`) +
+/// маппинг выходов инструмента в переменные контекста (`outputs`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub action: String,
     #[serde(default)]
     pub params: Value,
+    /// Ключ — JSON-путь в результате инструмента (например `pid` или
+    /// `body.choices.0.text`), значение — имя переменной контекста.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub outputs: HashMap<String, String>,
 }
 
 fn default_version() -> String {
@@ -79,6 +86,33 @@ mod tests {
     #[test]
     fn test_parse_invalid_json_returns_error() {
         assert!(Robot::from_json_str("{not json}").is_err());
+    }
+
+    #[test]
+    fn test_parse_robot_with_outputs() {
+        let robot = Robot::from_json_str(
+            r#"{
+                "name": "Proc",
+                "steps": [
+                    { "action": "windows.process", "params": { "action": "start" }, "outputs": { "pid": "browser_pid" } }
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            robot.steps[0].outputs.get("pid").map(String::as_str),
+            Some("browser_pid")
+        );
+    }
+
+    #[test]
+    fn test_serialize_omits_empty_outputs() {
+        let robot: Robot = Robot::from_json_str(
+            r#"{"name":"R","steps":[{"action":"windows.click","params":{}}]}"#,
+        )
+        .unwrap();
+        let json = robot.to_json().unwrap();
+        assert!(!json.contains("outputs"));
     }
 
     #[test]

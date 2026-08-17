@@ -45,6 +45,37 @@ pub enum EngineError {
     Tool(#[from] ToolError),
 }
 
+/// Извлекает значение из JSON-результата по точечному пути
+/// (например `pid` или `body.choices.0.text`); `None`, если путь не найден.
+fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        match current {
+            Value::Object(map) => current = map.get(segment)?,
+            Value::Array(items) => {
+                let index: usize = segment.parse().ok()?;
+                current = items.get(index)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
+}
+
+/// Преобразует JSON-значение в значение контекста (объекты — как JSON-строку).
+fn json_to_context_value(value: &Value) -> ContextValue {
+    match value {
+        Value::String(s) => ContextValue::String(s.clone()),
+        Value::Number(n) => ContextValue::Number(n.as_f64().unwrap_or(0.0)),
+        Value::Bool(b) => ContextValue::Boolean(*b),
+        Value::Null => ContextValue::Null,
+        Value::Array(items) => {
+            ContextValue::List(items.iter().map(json_to_context_value).collect())
+        }
+        Value::Object(_) => ContextValue::String(value.to_string()),
+    }
+}
+
 /// Исполняет роботов поверх `ToolRegistry`.
 pub struct RobotExecutor {
     registry: ToolRegistry,
@@ -95,6 +126,33 @@ impl RobotExecutor {
                 .await
             {
                 Ok(output) => {
+                    // Сохраняем выходы инструмента в контекст по маппингу шага.
+                    let mut mapping_error: Option<String> = None;
+                    for (path, var) in &step.outputs {
+                        match value_at_path(&output, path) {
+                            Some(value) => {
+                                ctx.set(var.clone(), json_to_context_value(value));
+                            }
+                            None => {
+                                mapping_error =
+                                    Some(format!("Output '{path}' not found in tool result"));
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(error) = mapping_error {
+                        warn!(action = %step.action, error = %error, "output mapping failed");
+                        steps.push(StepResult {
+                            action: step.action.clone(),
+                            ok: false,
+                            output: None,
+                            error: Some(error),
+                        });
+                        status = ReportStatus::Failed;
+                        break;
+                    }
+
                     let serialized = serde_json::to_string(&output).unwrap_or_default();
                     ctx.set("last_result", ContextValue::String(serialized));
                     steps.push(StepResult {
@@ -133,6 +191,7 @@ mod tests {
     use serde::Deserialize;
     use serde_json::json;
     use smith_core::{ExecutionContext, Tool};
+    use std::collections::HashMap;
 
     use crate::robot::Step;
 
@@ -211,10 +270,89 @@ mod tests {
         }
     }
 
+    /// Тестовый инструмент: имитирует запуск процесса (возвращает `pid`).
+    struct ProcTool;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct ProcInput {
+        name: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct ProcOutput {
+        status: &'static str,
+        pid: u32,
+    }
+
+    #[async_trait]
+    impl Tool for ProcTool {
+        type Input = ProcInput;
+        type Output = ProcOutput;
+
+        fn name(&self) -> &'static str {
+            "test.proc"
+        }
+
+        fn description(&self) -> &'static str {
+            "proc test tool"
+        }
+
+        fn schema(&self) -> Value {
+            json!({})
+        }
+
+        async fn execute(
+            &self,
+            _input: ProcInput,
+            _ctx: &mut ExecutionContext,
+            _token: CancellationToken,
+        ) -> Result<ProcOutput, ToolError> {
+            Ok(ProcOutput {
+                status: "started",
+                pid: 4242,
+            })
+        }
+    }
+
+    /// Тестовый инструмент: возвращает вложенный JSON (как `http.request`).
+    struct NestedTool;
+
+    #[async_trait]
+    impl Tool for NestedTool {
+        type Input = EchoInput;
+        type Output = Value;
+
+        fn name(&self) -> &'static str {
+            "test.nested"
+        }
+
+        fn description(&self) -> &'static str {
+            "nested json test tool"
+        }
+
+        fn schema(&self) -> Value {
+            json!({})
+        }
+
+        async fn execute(
+            &self,
+            _input: EchoInput,
+            _ctx: &mut ExecutionContext,
+            _token: CancellationToken,
+        ) -> Result<Value, ToolError> {
+            Ok(json!({
+                "status": 200,
+                "body": { "choices": [ { "text": "hello from llm" } ] }
+            }))
+        }
+    }
+
     fn registry_with_test_tools() -> ToolRegistry {
         let mut reg = ToolRegistry::new();
         reg.register(EchoTool);
         reg.register(SetVarTool);
+        reg.register(ProcTool);
+        reg.register(NestedTool);
         reg
     }
 
@@ -235,10 +373,12 @@ mod tests {
                 Step {
                     action: "test.set_var".into(),
                     params: json!({ "text": "Invoice" }),
+                    outputs: HashMap::new(),
                 },
                 Step {
                     action: "test.echo".into(),
                     params: json!({ "text": "Hello {{name}}" }),
+                    outputs: HashMap::new(),
                 },
             ],
         );
@@ -262,6 +402,7 @@ mod tests {
             vec![Step {
                 action: "no.such.tool".into(),
                 params: json!({}),
+                outputs: HashMap::new(),
             }],
         );
 
@@ -293,10 +434,12 @@ mod tests {
                 Step {
                     action: "test.echo".into(),
                     params: json!({ "text": "one" }),
+                    outputs: HashMap::new(),
                 },
                 Step {
                     action: "test.echo".into(),
                     params: json!({ "text": "two" }),
+                    outputs: HashMap::new(),
                 },
             ],
         );
@@ -310,5 +453,82 @@ mod tests {
         let report = executor.execute(&r, token).await;
         assert_eq!(report.status, ReportStatus::Cancelled);
         assert!(report.steps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_output_mapping_saves_context_variable() {
+        let executor = RobotExecutor::new(registry_with_test_tools());
+        let r = robot(
+            "map",
+            vec![
+                Step {
+                    action: "test.proc".into(),
+                    params: json!({ "name": "notepad.exe" }),
+                    outputs: HashMap::from([("pid".to_string(), "browser_pid".to_string())]),
+                },
+                Step {
+                    action: "test.echo".into(),
+                    params: json!({ "text": "pid={{browser_pid}}" }),
+                    outputs: HashMap::new(),
+                },
+            ],
+        );
+
+        let report = executor.execute(&r, CancellationToken::new()).await;
+        assert_eq!(report.status, ReportStatus::Success);
+        assert_eq!(
+            report.steps[1].output,
+            Some(json!({ "echoed": "pid=4242" }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_output_mapping_nested_path() {
+        let executor = RobotExecutor::new(registry_with_test_tools());
+        let r = robot(
+            "nested",
+            vec![
+                Step {
+                    action: "test.nested".into(),
+                    params: json!({}),
+                    outputs: HashMap::from([(
+                        "body.choices.0.text".to_string(),
+                        "llm_text".to_string(),
+                    )]),
+                },
+                Step {
+                    action: "test.echo".into(),
+                    params: json!({ "text": "{{llm_text}}" }),
+                    outputs: HashMap::new(),
+                },
+            ],
+        );
+
+        let report = executor.execute(&r, CancellationToken::new()).await;
+        assert_eq!(report.status, ReportStatus::Success);
+        assert_eq!(
+            report.steps[1].output,
+            Some(json!({ "echoed": "hello from llm" }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_output_mapping_missing_field_fails_step() {
+        let executor = RobotExecutor::new(registry_with_test_tools());
+        let r = robot(
+            "badmap",
+            vec![Step {
+                action: "test.proc".into(),
+                params: json!({}),
+                outputs: HashMap::from([("nonexistent".to_string(), "x".to_string())]),
+            }],
+        );
+
+        let report = executor.execute(&r, CancellationToken::new()).await;
+        assert_eq!(report.status, ReportStatus::Failed);
+        assert_eq!(report.steps.len(), 1);
+        assert!(!report.steps[0].ok);
+        let error = report.steps[0].error.as_deref().unwrap_or_default();
+        assert!(error.contains("nonexistent"));
     }
 }
