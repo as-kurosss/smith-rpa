@@ -1,5 +1,4 @@
 // crates/smith-windows/src/tools/process.rs
-use std::collections::HashSet;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -83,20 +82,27 @@ pub enum ProcessOutput {
 ///
 /// The daemon must NOT be exposed to untrusted networks (`--host 127.0.0.1`).
 /// Comparison is case-insensitive (Windows filesystem convention).
-fn is_command_allowed(cmd: &str) -> bool {
-    let allowed: HashSet<&str> = HashSet::from_iter([
+use std::sync::LazyLock;
+
+/// Список допустимых имён для запуска (immutable, вычисляется один раз).
+static ALLOWED_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    vec![
         "notepad.exe",
         "calc.exe",
         "mspaint.exe",
         "explorer.exe",
         "write.exe",
         "wordpad.exe",
-    ]);
+    ]
+});
 
+/// Проверяет, разрешён ли запуск данного исполняемого файла.
+fn is_command_allowed(cmd: &str) -> bool {
     // Extract the file name from the path
     let name = cmd.rsplit_once(['/', '\\']).map_or(cmd, |(_, file)| file);
-
-    allowed.iter().any(|&a| a.eq_ignore_ascii_case(name))
+    ALLOWED_COMMANDS
+        .iter()
+        .any(|&a| a.eq_ignore_ascii_case(name))
 }
 
 // ---------------------------------------------------------------------------
@@ -194,14 +200,19 @@ impl Tool for ProcessTool {
         _ctx: &mut ExecutionContext,
         token: CancellationToken,
     ) -> Result<ProcessOutput, ToolError> {
-        // 0. Optional delay before execution
-        if let Some(ms) = input.delay_before_ms.filter(|&ms| ms > 0) {
-            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-        }
-
-        // 1. Cancellation check (§5.4)
+        // 0. Cancellation check before any work (§5.4)
         if token.is_cancelled() {
             return Err(ToolError::cancelled());
+        }
+
+        // 1. Optional delay before execution
+        if let Some(ms) = input.delay_before_ms.filter(|&ms| ms > 0) {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {}
+                _ = token.cancelled() => {
+                    return Err(ToolError::cancelled());
+                }
+            }
         }
 
         // 2. Dispatch by action

@@ -19,7 +19,7 @@ use tracing::debug;
 use crate::job::{Job, JobId, JobStatus};
 
 /// Ошибка операций оркестратора.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq)]
 pub enum OrchestratorError {
     /// Запуск с указанным `JobId` не существует.
     #[error("Job not found: {id}")]
@@ -29,11 +29,16 @@ pub enum OrchestratorError {
     JobAlreadyFinished { id: u64 },
 }
 
+/// Объединённое состояние: jobs + tokens в одном Mutex.
+struct OrchestratorState {
+    jobs: HashMap<u64, Job>,
+    tokens: HashMap<u64, CancellationToken>,
+}
+
 /// Внутреннее состояние оркестратора (разделяется через `Arc`).
 struct Inner {
     executor: Arc<RobotExecutor>,
-    jobs: Mutex<HashMap<u64, Job>>,
-    tokens: Mutex<HashMap<u64, CancellationToken>>,
+    state: Mutex<OrchestratorState>,
     next_id: AtomicU64,
 }
 
@@ -50,8 +55,10 @@ impl Orchestrator {
         Self {
             inner: Arc::new(Inner {
                 executor: Arc::new(RobotExecutor::new(registry)),
-                jobs: Mutex::new(HashMap::new()),
-                tokens: Mutex::new(HashMap::new()),
+                state: Mutex::new(OrchestratorState {
+                    jobs: HashMap::new(),
+                    tokens: HashMap::new(),
+                }),
                 next_id: AtomicU64::new(0),
             }),
         }
@@ -65,20 +72,20 @@ impl Orchestrator {
         let token = CancellationToken::new();
         let robot_name = robot.name.clone();
 
+        // Атомарная вставка job + token в один Mutex.
         {
-            let mut jobs = lock(&self.inner.jobs);
-            jobs.insert(id, Job::queued(JobId(id), robot_name.clone()));
-        }
-        {
-            let mut tokens = lock(&self.inner.tokens);
-            tokens.insert(id, token.clone());
+            let mut state = lock(&self.inner.state);
+            state
+                .jobs
+                .insert(id, Job::queued(JobId(id), robot_name.clone()));
+            state.tokens.insert(id, token.clone());
         }
 
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
             {
-                let mut jobs = lock(&inner.jobs);
-                if let Some(job) = jobs.get_mut(&id) {
+                let mut state = lock(&inner.state);
+                if let Some(job) = state.jobs.get_mut(&id) {
                     job.status = JobStatus::Running;
                 }
             }
@@ -92,16 +99,13 @@ impl Orchestrator {
             };
 
             {
-                let mut jobs = lock(&inner.jobs);
-                if let Some(job) = jobs.get_mut(&id) {
+                let mut state = lock(&inner.state);
+                if let Some(job) = state.jobs.get_mut(&id) {
                     job.status = status;
                     job.report = Some(report);
                     job.finished_at = Some(SystemTime::now());
                 }
-            }
-            {
-                let mut tokens = lock(&inner.tokens);
-                tokens.remove(&id);
+                state.tokens.remove(&id);
             }
 
             debug!(job_id = id, status = ?status, "job finished");
@@ -118,10 +122,8 @@ impl Orchestrator {
     /// Возвращает `JobNotFound`, если запуска с таким id нет,
     /// и `JobAlreadyFinished`, если запуск уже завершился.
     pub fn cancel(&self, id: JobId) -> Result<(), OrchestratorError> {
-        // Сначала проверяем терминальный статус: токен удаляется после
-        // фиксации статуса, поэтому статус — надёжный признак завершения.
-        let job = lock(&self.inner.jobs).get(&id.0).cloned();
-        let Some(job) = job else {
+        let state = lock(&self.inner.state);
+        let Some(job) = state.jobs.get(&id.0) else {
             return Err(OrchestratorError::JobNotFound { id: id.0 });
         };
         if matches!(
@@ -130,8 +132,8 @@ impl Orchestrator {
         ) {
             return Err(OrchestratorError::JobAlreadyFinished { id: id.0 });
         }
-
-        let token = lock(&self.inner.tokens).get(&id.0).cloned();
+        let token = state.tokens.get(&id.0).cloned();
+        drop(state); // Освобождаем мьютекс перед cancel (token.cancel() не требует блокировки)
         match token {
             Some(token) => {
                 token.cancel();
@@ -144,15 +146,15 @@ impl Orchestrator {
     /// Возвращает текущее состояние запуска, если он существует.
     #[must_use]
     pub fn get(&self, id: JobId) -> Option<Job> {
-        let jobs = lock(&self.inner.jobs);
-        jobs.get(&id.0).cloned()
+        let state = lock(&self.inner.state);
+        state.jobs.get(&id.0).cloned()
     }
 
     /// Возвращает историю всех запусков, отсортированную по `JobId`.
     #[must_use]
     pub fn history(&self) -> Vec<Job> {
-        let jobs = lock(&self.inner.jobs);
-        let mut all: Vec<Job> = jobs.values().cloned().collect();
+        let state = lock(&self.inner.state);
+        let mut all: Vec<Job> = state.jobs.values().cloned().collect();
         all.sort_by_key(|job| job.id.0);
         all
     }

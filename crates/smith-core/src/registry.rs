@@ -57,11 +57,7 @@ impl ToolRegistry {
         token: CancellationToken,
     ) -> Result<serde_json::Value, ToolError> {
         let tool = self.get(name).ok_or_else(|| {
-            ToolError::invalid_input(
-                format!("Tool '{name}' not found"),
-                None,
-                Some(config.clone()),
-            )
+            ToolError::invalid_input(format!("Tool '{name}' not found"), None, None)
         })?;
         tool.execute(config, ctx, token).await
     }

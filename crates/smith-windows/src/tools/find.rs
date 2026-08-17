@@ -130,14 +130,19 @@ impl Tool for FindTool {
         ctx: &mut ExecutionContext,
         token: CancellationToken,
     ) -> Result<FindOutput, ToolError> {
-        // 0. Optional delay before execution
-        if let Some(ms) = input.delay_before_ms.filter(|&ms| ms > 0) {
-            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-        }
-
-        // 1. Cancellation check (§5.4)
+        // 0. Cancellation check before any work (§5.4)
         if token.is_cancelled() {
             return Err(ToolError::cancelled());
+        }
+
+        // 1. Optional delay before execution
+        if let Some(ms) = input.delay_before_ms.filter(|&ms| ms > 0) {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(ms)) => {}
+                _ = token.cancelled() => {
+                    return Err(ToolError::cancelled());
+                }
+            }
         }
 
         // 2. Build selector from input

@@ -100,7 +100,7 @@ impl RobotExecutor {
     /// шага сохраняется в контекст под ключом `last_result`.
     pub async fn execute(&self, robot: &Robot, token: CancellationToken) -> ExecutionReport {
         let mut ctx: ExecutionContext<Ready> = ExecutionContext::<Unvalidated>::new().validate();
-        let mut steps = Vec::new();
+        let mut steps = Vec::with_capacity(robot.steps.len());
         let mut status = ReportStatus::Success;
 
         // Отмена до начала выполнения: пустой робот или уже отменённый токен
