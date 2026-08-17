@@ -3,6 +3,7 @@ import type { Node } from "@xyflow/react";
 import { stepData } from "../lib/robot";
 import { TOOL_CATALOG } from "../lib/toolCatalog";
 import type { StepParams } from "../types";
+import { ToolParamForm, hasToolForm } from "./ToolParamForm";
 
 interface PropertyPanelProps {
   node: Node | null;
@@ -83,17 +84,44 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
         className="mb-4 w-full rounded-md border border-slate-300 px-2 py-1.5 font-mono text-sm"
       />
 
-      <label className="mb-1 block text-sm font-medium text-slate-700">Параметры (JSON)</label>
-      <textarea
-        value={paramsText}
-        onChange={(e) => handleParamsChange(e.target.value)}
-        rows={12}
-        spellCheck={false}
-        className={`w-full rounded-md border px-2 py-1.5 font-mono text-xs ${
-          paramsError ? "border-red-400" : "border-slate-300"
-        }`}
-      />
-      {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+      {hasToolForm(data.action) ? (
+        <>
+          <ToolParamForm
+            toolName={data.action}
+            params={data.params}
+            onChange={(p) => onUpdate(node.id, data.action, p, data.outputs)}
+          />
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-600">
+              JSON (расширенный)
+            </summary>
+            <textarea
+              value={paramsText}
+              onChange={(e) => handleParamsChange(e.target.value)}
+              rows={6}
+              spellCheck={false}
+              className={`mt-1 w-full rounded-md border px-2 py-1.5 font-mono text-xs ${
+                paramsError ? "border-red-400" : "border-slate-300"
+              }`}
+            />
+            {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+          </details>
+        </>
+      ) : (
+        <>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Параметры (JSON)</label>
+          <textarea
+            value={paramsText}
+            onChange={(e) => handleParamsChange(e.target.value)}
+            rows={12}
+            spellCheck={false}
+            className={`w-full rounded-md border px-2 py-1.5 font-mono text-xs ${
+              paramsError ? "border-red-400" : "border-slate-300"
+            }`}
+          />
+          {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+        </>
+      )}
 
       <div className="mb-4">
         <label className="mb-1 block text-sm font-medium text-slate-700">Выходы</label>

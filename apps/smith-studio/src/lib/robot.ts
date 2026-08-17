@@ -2,7 +2,7 @@ import type { Node } from "@xyflow/react";
 import type { ActionNodeData, RobotModel, RobotStep, StepParams } from "../types";
 
 /** Вертикальный отступ между узлами при авто-раскладке. */
-export const NODE_ROW_HEIGHT = 100;
+export const NODE_ROW_HEIGHT = 85;
 
 /** Создаёт узел шага робота. */
 export function makeStepNode(
