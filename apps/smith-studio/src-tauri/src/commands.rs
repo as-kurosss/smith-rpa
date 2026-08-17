@@ -31,7 +31,7 @@ pub fn parse_robot(json: String) -> Result<Value, String> {
 ///
 /// Возвращает строку с описанием ошибки, если JSON не корректен.
 #[tauri::command]
-pub fn run_robot(state: State<'_, Orchestrator>, json: String) -> Result<u64, String> {
+pub async fn run_robot(state: State<'_, Orchestrator>, json: String) -> Result<u64, String> {
     let robot = Robot::from_json_str(&json).map_err(|e| e.to_string())?;
     Ok(state.submit(robot).0)
 }
