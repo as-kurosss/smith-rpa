@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import {
   Background,
   Controls,
@@ -128,16 +129,21 @@ export default function App() {
     setStatus("Шаг удалён");
   }, []);
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
-    const blob = new Blob([serializeRobot(robot)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${robot.name.replace(/[^\wа-яА-Я-]+/g, "_")}.robot.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setStatus(`Робот сохранён (${robot.steps.length} шагов)`);
+    const defaultName = `${robot.name.replace(/[^\wа-яА-Я-]+/g, "_")}.robot.json`;
+    try {
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "Robot JSON", extensions: ["robot.json", "json"] }],
+      });
+      if (path) {
+        await invoke("save_file", { path, content: serializeRobot(robot) });
+        setStatus(`Робот сохранён: ${path} (${robot.steps.length} шагов)`);
+      }
+    } catch (error) {
+      setStatus(`Ошибка сохранения: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, [nodes, robotName, version]);
 
   const handleLoad = useCallback((file: File) => {

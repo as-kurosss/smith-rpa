@@ -7,6 +7,7 @@ fn main() {
     let orchestrator = smith_orchestrator::Orchestrator::new(smith_engine::default_registry());
 
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(orchestrator)
         .invoke_handler(tauri::generate_handler![
             commands::health,
@@ -14,7 +15,8 @@ fn main() {
             commands::run_robot,
             commands::cancel_job,
             commands::get_job,
-            commands::get_history
+            commands::get_history,
+            commands::save_file
         ])
         .run(tauri::generate_context!());
 

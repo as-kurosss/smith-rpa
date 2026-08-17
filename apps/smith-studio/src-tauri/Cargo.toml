@@ -16,3 +16,4 @@ serde_json = { workspace = true }
 smith-core = { version = "0.1.0", path = "../../../crates/smith-core" }
 smith-engine = { version = "0.1.0", path = "../../../crates/smith-engine" }
 smith-orchestrator = { version = "0.1.0", path = "../../../crates/smith-orchestrator" }
+tauri-plugin-dialog = "2.7.2"

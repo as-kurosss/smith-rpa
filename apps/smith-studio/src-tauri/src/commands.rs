@@ -3,6 +3,8 @@
 //! M4: проверка связи и валидация JSON-модели робота.
 //! M5: запуск/отмена/история через smith-orchestrator.
 
+use std::fs;
+
 use serde_json::Value;
 use smith_engine::Robot;
 use smith_orchestrator::{Job, JobId, Orchestrator};
@@ -56,4 +58,10 @@ pub fn get_job(state: State<'_, Orchestrator>, id: u64) -> Result<Option<Job>, S
 #[tauri::command]
 pub fn get_history(state: State<'_, Orchestrator>) -> Result<Vec<Job>, String> {
     Ok(state.history())
+}
+
+/// Сохраняет текст в файл по указанному пути.
+#[tauri::command]
+pub fn save_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content.as_bytes()).map_err(|e| format!("Ошибка записи: {e}"))
 }
