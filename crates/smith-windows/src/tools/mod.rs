@@ -10,6 +10,8 @@ pub mod input_text;
 #[cfg(windows)]
 pub mod process;
 #[cfg(windows)]
+pub mod resolve;
+#[cfg(windows)]
 pub mod screenshot;
 #[cfg(windows)]
 pub mod set_text;

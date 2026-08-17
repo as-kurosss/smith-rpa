@@ -150,11 +150,20 @@ impl Tool for SetTextTool {
 
         // 2. Get element
         let text = input.text.clone();
-        let element = resolve_element_from_config(&input, ctx)
-            .await?
-            .ok_or_else(|| {
-                ToolError::invalid_input("Missing 'element_key' or selector fields", None, None)
-            })?;
+        let element = super::resolve::resolve_element(
+            input.element_key.as_deref(),
+            super::resolve::SelectorFields {
+                name: input.name.as_deref(),
+                automation_id: input.automation_id.as_deref(),
+                control_type: input.control_type.as_deref(),
+                class_name: input.class_name.as_deref(),
+            },
+            ctx,
+        )
+        .await?
+        .ok_or_else(|| {
+            ToolError::invalid_input("Missing 'element_key' or selector fields", None, None)
+        })?;
 
         // 3. Set text via ValuePattern in blocking thread
         tokio::task::spawn_blocking(move || {
@@ -177,54 +186,4 @@ impl Tool for SetTextTool {
 
         Ok(SetTextOutput { status: "text_set" })
     }
-}
-
-/// Resolves a UI element from input, trying in order:
-/// 1. Look up `element_key` in the execution context
-/// 2. Build an `ElementSelector` from selector fields and find from desktop
-async fn resolve_element_from_config(
-    input: &SetTextInput,
-    ctx: &ExecutionContext,
-) -> Result<Option<crate::element::SafeUIElement>, ToolError> {
-    use crate::element::SafeUIElement;
-    use crate::selector::ElementSelector;
-
-    // 1. Try to get element from context by element_key
-    if let Some(ref key) = input.element_key {
-        let value = ctx.get(key).ok_or_else(|| {
-            ToolError::invalid_input(
-                format!("Key '{key}' not found in context"),
-                Some("element_key".into()),
-                None,
-            )
-        })?;
-        return value
-            .try_as_custom::<SafeUIElement>()
-            .map(|e| Some(e.clone()));
-    }
-
-    // 2. Try to find element by selector fields
-    let mut selector = ElementSelector::new();
-    if let Some(ref name) = input.name {
-        selector = selector.name(name);
-    }
-    if let Some(ref aid) = input.automation_id {
-        selector = selector.automation_id(aid);
-    }
-    if let Some(ref ct) = input.control_type {
-        selector = selector.control_type(ct);
-    }
-    if let Some(ref cn) = input.class_name {
-        selector = selector.class_name(cn);
-    }
-
-    let safe_element =
-        tokio::task::spawn_blocking(move || selector.find_from_desktop().map(SafeUIElement::new))
-            .await
-            .map_err(|e| ToolError::platform_error("Find element blocking task failed", e, None))?
-            .map_err(|_e| {
-                ToolError::element_not_found("No element found matching selector", None)
-            })?;
-
-    Ok(Some(safe_element))
 }
