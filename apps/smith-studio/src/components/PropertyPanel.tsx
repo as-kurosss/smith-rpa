@@ -4,6 +4,10 @@ import { stepData } from "../lib/robot";
 import { TOOL_CATALOG } from "../lib/toolCatalog";
 import type { StepParams } from "../types";
 import { ToolParamForm, hasToolForm } from "./ToolParamForm";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
 
 interface PropertyPanelProps {
   node: Node | null;
@@ -34,7 +38,7 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
 
   if (!node || !data) {
     return (
-      <aside className="w-80 border-l border-slate-200 bg-white p-4 text-sm text-slate-400">
+      <aside className="w-80 border-l border-border bg-card p-4 text-sm text-muted-foreground">
         Выберите шаг на холсте, чтобы изменить его параметры.
       </aside>
     );
@@ -72,16 +76,16 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
   };
 
   return (
-    <aside className="w-80 overflow-y-auto border-l border-slate-200 bg-white p-4">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+    <aside className="w-80 overflow-y-auto border-l border-border bg-card p-4">
+      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Шаг {data.index + 1}
       </h2>
 
-      <label className="mb-1 block text-sm font-medium text-slate-700">Инструмент</label>
-      <input
+      <Label className="mb-1">Инструмент</Label>
+      <Input
         value={data.action}
         onChange={(e) => handleActionChange(e.target.value)}
-        className="mb-4 w-full rounded-md border border-slate-300 px-2 py-1.5 font-mono text-sm"
+        className="mb-4 font-mono"
       />
 
       {hasToolForm(data.action) ? (
@@ -92,58 +96,54 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
             onChange={(p) => onUpdate(node.id, data.action, p, data.outputs)}
           />
           <details className="mt-2">
-            <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-600">
+            <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
               JSON (расширенный)
             </summary>
-            <textarea
+            <Textarea
               value={paramsText}
               onChange={(e) => handleParamsChange(e.target.value)}
               rows={6}
               spellCheck={false}
-              className={`mt-1 w-full rounded-md border px-2 py-1.5 font-mono text-xs ${
-                paramsError ? "border-red-400" : "border-slate-300"
-              }`}
+              className={`mt-1 font-mono text-xs ${paramsError ? "border-destructive" : ""}`}
             />
-            {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+            {paramsError && <p className="mt-1 text-xs text-destructive">{paramsError}</p>}
           </details>
         </>
       ) : (
         <>
-          <label className="mb-1 block text-sm font-medium text-slate-700">Параметры (JSON)</label>
-          <textarea
+          <Label className="mb-1">Параметры (JSON)</Label>
+          <Textarea
             value={paramsText}
             onChange={(e) => handleParamsChange(e.target.value)}
             rows={12}
             spellCheck={false}
-            className={`w-full rounded-md border px-2 py-1.5 font-mono text-xs ${
-              paramsError ? "border-red-400" : "border-slate-300"
-            }`}
+            className={`font-mono text-xs ${paramsError ? "border-destructive" : ""}`}
           />
-          {paramsError && <p className="mt-1 text-xs text-red-600">{paramsError}</p>}
+          {paramsError && <p className="mt-1 text-xs text-destructive">{paramsError}</p>}
         </>
       )}
 
       <div className="mb-4">
-        <label className="mb-1 block text-sm font-medium text-slate-700">Выходы</label>
+        <Label className="mb-1">Выходы</Label>
         {outputDefs.length === 0 ? (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-muted-foreground">
             Этот инструмент не возвращает значений.
           </p>
         ) : (
           <div className="space-y-2">
             {outputDefs.map((output) => (
               <div key={output.name}>
-                <label className="mb-0.5 block font-mono text-xs text-slate-500">
+                <Label className="mb-0.5 font-mono text-xs text-muted-foreground">
                   {output.name}{" "}
-                  <span className="text-slate-400">({output.type})</span>
-                </label>
-                <input
+                  <span className="text-muted-foreground">({output.type})</span>
+                </Label>
+                <Input
                   value={data.outputs[output.name] ?? ""}
                   onChange={(e) => handleOutputChange(output.name, e.target.value)}
                   placeholder="имя переменной"
-                  className="w-full rounded-md border border-slate-300 px-2 py-1.5 font-mono text-xs"
+                  className="font-mono text-xs"
                 />
-                <p className="mt-0.5 text-[10px] text-slate-400">{output.description}</p>
+                <p className="mt-0.5 text-[10px] text-muted-foreground">{output.description}</p>
               </div>
             ))}
           </div>
@@ -151,28 +151,21 @@ export function PropertyPanel({ node, onUpdate, onDelete, onMove }: PropertyPane
       </div>
 
       <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={() => onMove(node.id, -1)}
-          className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50"
-        >
+        <Button variant="outline" size="sm" onClick={() => onMove(node.id, -1)} className="flex-1">
           ↑ Вверх
-        </button>
-        <button
-          type="button"
-          onClick={() => onMove(node.id, 1)}
-          className="flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50"
-        >
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => onMove(node.id, 1)} className="flex-1">
           ↓ Вниз
-        </button>
+        </Button>
       </div>
-      <button
-        type="button"
+      <Button
+        variant="destructive"
+        size="sm"
         onClick={() => onDelete(node.id)}
-        className="mt-2 w-full rounded-md border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-700 hover:bg-red-100"
+        className="mt-2 w-full"
       >
         Удалить шаг
-      </button>
+      </Button>
     </aside>
   );
 }

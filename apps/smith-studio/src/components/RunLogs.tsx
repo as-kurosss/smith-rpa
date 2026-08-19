@@ -1,4 +1,5 @@
 import type { ExecutionReportView, JobView } from "../types";
+import { Badge } from "./ui/badge";
 
 interface RunLogsProps {
   jobStatus: string | null;
@@ -14,32 +15,33 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Отменён",
 };
 
-const STATUS_COLOR: Record<string, string> = {
-  queued: "bg-slate-200 text-slate-700",
-  running: "bg-amber-100 text-amber-800",
-  succeeded: "bg-emerald-100 text-emerald-800",
-  failed: "bg-red-100 text-red-800",
-  cancelled: "bg-slate-200 text-slate-600",
-};
 
 /** Нижняя панель: статус текущего запуска, пошаговый отчёт и история. */
 export function RunLogs({ jobStatus, report, history }: RunLogsProps) {
   const statusLabel = jobStatus ? (STATUS_LABEL[jobStatus] ?? jobStatus) : null;
-  const statusColor = jobStatus ? (STATUS_COLOR[jobStatus] ?? "bg-slate-200 text-slate-700") : null;
+
+  const badgeVariant = (status: string): "default" | "secondary" | "destructive" | "outline" => {
+    switch (status) {
+      case "succeeded": return "default";
+      case "failed": return "destructive";
+      case "running": return "secondary";
+      default: return "outline";
+    }
+  };
 
   return (
-    <div className="flex max-h-56 flex-col overflow-hidden border-t border-slate-200 bg-white">
+    <div className="flex max-h-56 flex-col overflow-hidden border-t border-border bg-card">
       <div className="flex min-h-0 flex-1">
         {/* Текущий запуск */}
-        <section className="flex w-1/2 flex-col border-r border-slate-100 p-3">
+        <section className="flex w-1/2 flex-col border-r border-border p-3">
           <div className="mb-2 flex items-center gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Запуск
             </h2>
             {statusLabel && (
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor}`}>
+              <Badge variant={badgeVariant(jobStatus ?? "")}>
                 {statusLabel}
-              </span>
+              </Badge>
             )}
           </div>
           {report ? (
@@ -51,17 +53,17 @@ export function RunLogs({ jobStatus, report, history }: RunLogsProps) {
                     step.ok ? "bg-emerald-50 text-emerald-900" : "bg-red-50 text-red-900"
                   }`}
                 >
-                  <span className="mr-2 text-slate-400">{i + 1}.</span>
+                  <span className="mr-2 text-muted-foreground">{i + 1}.</span>
                   <span className="font-medium">{step.action}</span>
                   {step.ok && step.output !== undefined && (
-                    <span className="ml-2 text-slate-500">{JSON.stringify(step.output)}</span>
+                    <span className="ml-2 text-muted-foreground">{JSON.stringify(step.output)}</span>
                   )}
                   {!step.ok && step.error && <span className="ml-2">{step.error}</span>}
                 </li>
               ))}
             </ol>
           ) : (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted-foreground">
               {jobStatus ? "Робот выполняется…" : "Запустите робота, чтобы увидеть логи."}
             </p>
           )}
@@ -69,27 +71,23 @@ export function RunLogs({ jobStatus, report, history }: RunLogsProps) {
 
         {/* История */}
         <section className="flex w-1/2 flex-col p-3">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             История запусков
           </h2>
           {history.length === 0 ? (
-            <p className="text-sm text-slate-400">Запусков пока нет.</p>
+            <p className="text-sm text-muted-foreground">Запусков пока нет.</p>
           ) : (
             <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto font-mono text-xs">
               {[...history].reverse().map((job) => (
                 <li
                   key={job.id}
-                  className="flex items-center gap-2 rounded px-2 py-1 bg-slate-50"
+                  className="flex items-center gap-2 rounded px-2 py-1 bg-secondary/50"
                 >
-                  <span className="text-slate-400">#{job.id}</span>
-                  <span className="truncate text-slate-700">{job.robot_name}</span>
-                  <span
-                    className={`ml-auto rounded-full px-2 py-0.5 text-xs font-medium ${
-                      STATUS_COLOR[job.status] ?? "bg-slate-200 text-slate-700"
-                    }`}
-                  >
+                  <span className="text-muted-foreground">#{job.id}</span>
+                  <span className="truncate text-foreground">{job.robot_name}</span>
+                  <Badge variant={badgeVariant(job.status)} className="ml-auto">
                     {STATUS_LABEL[job.status] ?? job.status}
-                  </span>
+                  </Badge>
                 </li>
               ))}
             </ul>

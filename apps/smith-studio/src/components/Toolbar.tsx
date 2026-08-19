@@ -1,4 +1,7 @@
 import { useRef } from "react";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 
 interface ToolbarProps {
   robotName: string;
@@ -38,22 +41,22 @@ export function Toolbar({
   };
 
   return (
-    <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
-      <h1 className="mr-2 text-sm font-bold text-slate-800">Smith RPA Studio</h1>
+    <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-2">
+      <h1 className="mr-2 text-sm font-bold text-foreground">Smith RPA Studio</h1>
 
-      <label className="text-xs text-slate-500">Имя</label>
-      <input
+      <Label className="text-muted-foreground">Имя</Label>
+      <Input
         value={robotName}
         onChange={(e) => onNameChange(e.target.value)}
-        className="w-44 rounded-md border border-slate-300 px-2 py-1 text-sm"
+        className="w-44"
         placeholder="My robot"
       />
 
-      <label className="text-xs text-slate-500">Версия</label>
-      <input
+      <Label className="text-muted-foreground">Версия</Label>
+      <Input
         value={version}
         onChange={(e) => onVersionChange(e.target.value)}
-        className="w-20 rounded-md border border-slate-300 px-2 py-1 text-sm"
+        className="w-20"
       />
 
       <span className="ml-auto flex items-center gap-2">
@@ -64,39 +67,25 @@ export function Toolbar({
           className="hidden"
           onChange={(e) => handleFileChange(e.target.files?.[0])}
         />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-        >
+        <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
           Загрузить JSON
-        </button>
-        <button
-          type="button"
-          onClick={onSave}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-        >
+        </Button>
+        <Button variant="outline" size="sm" onClick={onSave}>
           Сохранить JSON
-        </button>
+        </Button>
         {running && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
-          >
+          <Button variant="destructive" size="sm" onClick={onCancel}>
             Отменить
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
+        <Button
+          size="sm"
           onClick={onRun}
           disabled={!canRun || running}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium text-white ${
-            running ? "bg-amber-500" : "bg-blue-600 hover:bg-blue-700 disabled:opacity-40"
-          }`}
+          className={running ? "bg-amber-500 hover:bg-amber-600" : ""}
         >
           {running ? "Выполняется…" : "Запустить"}
-        </button>
+        </Button>
       </span>
     </header>
   );

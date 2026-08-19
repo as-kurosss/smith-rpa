@@ -1,4 +1,7 @@
 import type { StepParams } from "../types";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Textarea } from "./ui/textarea";
 
 // ---------------------------------------------------------------------------
 // Field descriptors
@@ -191,16 +194,16 @@ export function ToolParamForm({ toolName, params, onChange }: ToolParamFormProps
 
         return (
           <div key={field.key}>
-            <label className="mb-0.5 flex items-center gap-1 text-xs font-medium text-slate-600">
+            <Label className="mb-0.5 flex items-center gap-1 text-xs">
               {field.label}
-              {field.required && <span className="text-red-400">*</span>}
-            </label>
+              {field.required && <span className="text-destructive">*</span>}
+            </Label>
 
             {field.type === "select" ? (
               <select
                 value={strValue}
                 onChange={(e) => update(field.key, e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-mono"
               >
                 {(field.options ?? []).map((opt) => (
                   <option key={opt} value={opt}>
@@ -209,29 +212,29 @@ export function ToolParamForm({ toolName, params, onChange }: ToolParamFormProps
                 ))}
               </select>
             ) : field.type === "textarea" ? (
-              <textarea
+              <Textarea
                 value={strValue}
                 onChange={(e) => update(field.key, e.target.value)}
                 rows={3}
                 spellCheck={false}
                 placeholder={field.placeholder}
-                className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+                className="font-mono text-xs"
               />
             ) : field.type === "number" ? (
-              <input
+              <Input
                 type="number"
                 value={strValue}
                 onChange={(e) => update(field.key, e.target.value === "" ? "" : Number(e.target.value))}
                 placeholder={field.placeholder}
-                className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+                className="font-mono text-xs"
               />
             ) : (
-              <input
+              <Input
                 type="text"
                 value={strValue}
                 onChange={(e) => update(field.key, e.target.value)}
                 placeholder={field.placeholder}
-                className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+                className="font-mono text-xs"
               />
             )}
           </div>
