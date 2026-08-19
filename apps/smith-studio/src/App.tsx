@@ -213,6 +213,20 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [debugMode, currentJobId]);
 
+  // F9 — Toggle breakpoint на выделенной ноде (в режиме отладки).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "F9" || !debugMode) return;
+      e.preventDefault();
+      const selectedNode = nodes.find((n) => n.selected);
+      if (selectedNode) {
+        toggleBreakpoint(selectedNode.data.index as number);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [debugMode, nodes, toggleBreakpoint]);
+
   const handleSave = useCallback(async () => {
     const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
     const defaultName = `${robot.name.replace(/[^\wа-яА-Я-]+/g, "_")}.robot.json`;
@@ -365,7 +379,6 @@ export default function App() {
                 breakpoint: breakpoints.has(stepData(node).index),
                 currentStep: debugCurrentStep,
                 debugMode,
-                onToggleBreakpoint: toggleBreakpoint,
               },
             }))}
             edges={edges}
