@@ -16,7 +16,13 @@ fn main() {
             commands::cancel_job,
             commands::get_job,
             commands::get_history,
-            commands::save_file
+            commands::get_context_vars,
+            commands::save_file,
+            commands::run_debug,
+            commands::set_breakpoints,
+            commands::resume_execution,
+            commands::step_over,
+            commands::debug_status
         ])
         .run(tauri::generate_context!());
 

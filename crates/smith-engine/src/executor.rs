@@ -6,6 +6,7 @@ use smith_core::{ContextValue, ExecutionContext, Ready, ToolError, ToolRegistry,
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
+use crate::debug::{DebugController, StepAction};
 use crate::interpolate;
 use crate::robot::Robot;
 
@@ -76,16 +77,27 @@ fn json_to_context_value(value: &Value) -> ContextValue {
     }
 }
 
+use smith_core::ContextMap;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Ключ для хранения снимков контекста: job_id -> context snapshot per step.
+pub type ContextStore = Arc<Mutex<HashMap<u64, Vec<ContextMap>>>>;
+
 /// Исполняет роботов поверх `ToolRegistry`.
 pub struct RobotExecutor {
     registry: ToolRegistry,
+    contexts: ContextStore,
 }
 
 impl RobotExecutor {
     /// Создаёт исполнитель с заданным реестром инструментов.
     #[must_use]
     pub fn new(registry: ToolRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            contexts: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Возвращает реестр инструментов.
@@ -94,11 +106,27 @@ impl RobotExecutor {
         &self.registry
     }
 
+    /// Возвращает хранилище снимков контекста.
+    #[must_use]
+    pub fn contexts(&self) -> &ContextStore {
+        &self.contexts
+    }
+
     /// Исполняет робота линейно.
     ///
     /// Останавливается на первой ошибке или при отмене. Результат каждого
     /// шага сохраняется в контекст под ключом `last_result`.
-    pub async fn execute(&self, robot: &Robot, token: CancellationToken) -> ExecutionReport {
+    /// Принимает `job_id` для сохранения снимков контекста.
+    ///
+    /// Если передан `debug`, executor проверяет breakpoints перед каждым
+    /// шагом и поддерживает паузу/step-over.
+    pub async fn execute(
+        &self,
+        job_id: u64,
+        robot: &Robot,
+        token: CancellationToken,
+        debug: Option<Arc<DebugController>>,
+    ) -> ExecutionReport {
         let mut ctx: ExecutionContext<Ready> = ExecutionContext::<Unvalidated>::new().validate();
         let mut steps = Vec::with_capacity(robot.steps.len());
         let mut status = ReportStatus::Success;
@@ -113,9 +141,16 @@ impl RobotExecutor {
             };
         }
 
-        for step in &robot.steps {
+        for (idx, step) in robot.steps.iter().enumerate() {
             if token.is_cancelled() {
                 status = ReportStatus::Cancelled;
+                break;
+            }
+
+            // Пошаговая отладка: пауза перед выполнением шага.
+            if let Some(dc) = &debug
+                && dc.should_continue(idx).await == StepAction::Pause
+            {
                 break;
             }
 
@@ -155,12 +190,26 @@ impl RobotExecutor {
 
                     let serialized = serde_json::to_string(&output).unwrap_or_default();
                     ctx.set("last_result", ContextValue::String(serialized));
+
+                    // Сохраняем снимок контекста для debug-консоли.
+                    if let Ok(mut store) = self.contexts.lock() {
+                        store.entry(job_id).or_default().push(ctx.snapshot());
+                    }
+
                     steps.push(StepResult {
                         action: step.action.clone(),
                         ok: true,
                         output: Some(output),
                         error: None,
                     });
+
+                    // Пошаговая отладка: обновить текущий шаг и проверить step-over.
+                    if let Some(dc) = &debug {
+                        dc.update_step(idx + 1);
+                        if dc.check_step_over() {
+                            break;
+                        }
+                    }
                 }
                 Err(err) => {
                     warn!(action = %step.action, error = %err, "step failed");
@@ -174,6 +223,16 @@ impl RobotExecutor {
                     break;
                 }
             }
+        }
+
+        // Финальный снимок (после последнего шага или при ошибке).
+        if let Ok(mut store) = self.contexts.lock() {
+            store.entry(job_id).or_default().push(ctx.snapshot());
+        }
+
+        // Отмена во время паузы: токен мог быть отменён, пока executor ждал.
+        if token.is_cancelled() {
+            status = ReportStatus::Cancelled;
         }
 
         ExecutionReport {
@@ -383,7 +442,9 @@ mod tests {
             ],
         );
 
-        let report = executor.execute(&r, CancellationToken::new()).await;
+        let report = executor
+            .execute(0, &r, CancellationToken::new(), None)
+            .await;
         assert_eq!(report.status, ReportStatus::Success);
         assert_eq!(report.steps.len(), 2);
         assert!(report.steps[0].ok);
@@ -406,7 +467,9 @@ mod tests {
             }],
         );
 
-        let report = executor.execute(&r, CancellationToken::new()).await;
+        let report = executor
+            .execute(0, &r, CancellationToken::new(), None)
+            .await;
         assert_eq!(report.status, ReportStatus::Failed);
         assert_eq!(report.steps.len(), 1);
         assert!(!report.steps[0].ok);
@@ -420,7 +483,7 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
 
-        let report = executor.execute(&r, token).await;
+        let report = executor.execute(0, &r, token, None).await;
         assert_eq!(report.status, ReportStatus::Cancelled);
         assert!(report.steps.is_empty());
     }
@@ -450,7 +513,7 @@ mod tests {
         // В реальном потоке управление — внутри executor, поэтому просто
         // проверяем, что пустой список шагов с отменённым токеном даёт Cancelled.
         token.cancel();
-        let report = executor.execute(&r, token).await;
+        let report = executor.execute(0, &r, token, None).await;
         assert_eq!(report.status, ReportStatus::Cancelled);
         assert!(report.steps.is_empty());
     }
@@ -474,7 +537,9 @@ mod tests {
             ],
         );
 
-        let report = executor.execute(&r, CancellationToken::new()).await;
+        let report = executor
+            .execute(0, &r, CancellationToken::new(), None)
+            .await;
         assert_eq!(report.status, ReportStatus::Success);
         assert_eq!(
             report.steps[1].output,
@@ -504,7 +569,9 @@ mod tests {
             ],
         );
 
-        let report = executor.execute(&r, CancellationToken::new()).await;
+        let report = executor
+            .execute(0, &r, CancellationToken::new(), None)
+            .await;
         assert_eq!(report.status, ReportStatus::Success);
         assert_eq!(
             report.steps[1].output,
@@ -524,7 +591,9 @@ mod tests {
             }],
         );
 
-        let report = executor.execute(&r, CancellationToken::new()).await;
+        let report = executor
+            .execute(0, &r, CancellationToken::new(), None)
+            .await;
         assert_eq!(report.status, ReportStatus::Failed);
         assert_eq!(report.steps.len(), 1);
         assert!(!report.steps[0].ok);

@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::tool::ToolError;
 
 // ---------------------------------------------------------------------------
@@ -52,6 +54,34 @@ impl PartialEq for ContextValue {
 }
 
 impl ContextValue {
+    /// Возвращает текстовое имя типа значения.
+    #[must_use]
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::String(_) => "String",
+            Self::Number(_) => "Number",
+            Self::Boolean(_) => "Boolean",
+            Self::List(_) => "List",
+            Self::Bytes(_) => "Bytes",
+            Self::Custom(_) => "Object",
+            Self::Null => "Null",
+        }
+    }
+
+    /// Возвращает строковое представление значения (для отладки).
+    #[must_use]
+    pub fn display(&self) -> String {
+        match self {
+            Self::String(s) => format!("\"{s}\""),
+            Self::Number(n) => format!("{n}"),
+            Self::Boolean(b) => format!("{b}"),
+            Self::List(items) => format!("[{} items]", items.len()),
+            Self::Bytes(b) => format!("[{} bytes]", b.len()),
+            Self::Custom(_) => "<Object>".to_string(),
+            Self::Null => "null".to_string(),
+        }
+    }
+
     /// Extracts a string value.
     ///
     /// # Errors
@@ -155,6 +185,22 @@ impl Default for ExecutionContext<Unvalidated> {
 }
 
 // ---------------------------------------------------------------------------
+// ContextSnapshot — snapshot for debug console
+// ---------------------------------------------------------------------------
+
+/// Снимок одной переменной контекста (для отладки).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSnapshot {
+    /// Тип значения (String, Number, Boolean, List, Bytes, Object, Null).
+    pub type_name: String,
+    /// Строковое представление значения.
+    pub value: String,
+}
+
+/// Полный снимок контекста: все переменные из всех скоупов.
+pub type ContextMap = HashMap<String, ContextSnapshot>;
+
+// ---------------------------------------------------------------------------
 // I/O operations — available in any state
 // ---------------------------------------------------------------------------
 
@@ -187,6 +233,25 @@ impl<State> ExecutionContext<State> {
             }
         }
         None
+    }
+
+    /// Создаёт снимок всех переменных из всех скоупов.
+    /// Переменные из локальных скоупов перезаписывают глобальные.
+    #[must_use]
+    pub fn snapshot(&self) -> ContextMap {
+        let mut map = HashMap::new();
+        for scope in &self.scopes {
+            for (key, value) in scope {
+                map.insert(
+                    key.clone(),
+                    ContextSnapshot {
+                        type_name: value.type_name().to_string(),
+                        value: value.display(),
+                    },
+                );
+            }
+        }
+        map
     }
 }
 

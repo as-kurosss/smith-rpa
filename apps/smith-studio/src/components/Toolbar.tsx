@@ -12,8 +12,13 @@ interface ToolbarProps {
   onLoad: (file: File) => void;
   onRun: () => void;
   onCancel: () => void;
+  onDebugRun: () => void;
+  onResume: () => void;
+  onStepOver: () => void;
   canRun: boolean;
   running: boolean;
+  debugMode: boolean;
+  isPaused: boolean;
 }
 
 /** Верхняя панель: имя робота, версия, сохранение/загрузка JSON, запуск. */
@@ -26,8 +31,13 @@ export function Toolbar({
   onLoad,
   onRun,
   onCancel,
+  onDebugRun,
+  onResume,
+  onStepOver,
   canRun,
   running,
+  debugMode,
+  isPaused,
 }: ToolbarProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -73,19 +83,46 @@ export function Toolbar({
         <Button variant="outline" size="sm" onClick={onSave}>
           Сохранить JSON
         </Button>
-        {running && (
+        {debugMode && isPaused && (
+          <>
+            <Button variant="outline" size="sm" onClick={onResume}>
+              ▶ Продолжить
+            </Button>
+            <Button variant="outline" size="sm" onClick={onStepOver}>
+              ⏭ Шаг
+            </Button>
+          </>
+        )}
+        {running && !debugMode && (
           <Button variant="destructive" size="sm" onClick={onCancel}>
             Отменить
           </Button>
         )}
-        <Button
-          size="sm"
-          onClick={onRun}
-          disabled={!canRun || running}
-          className={running ? "bg-amber-500 hover:bg-amber-600" : ""}
-        >
-          {running ? "Выполняется…" : "Запустить"}
-        </Button>
+        {debugMode && running && (
+          <Button variant="destructive" size="sm" onClick={onCancel}>
+            Стоп
+          </Button>
+        )}
+        {!debugMode && (
+          <Button
+            size="sm"
+            onClick={onRun}
+            disabled={!canRun || running}
+            className={running ? "bg-amber-500 hover:bg-amber-600" : ""}
+          >
+            {running ? "Выполняется…" : "Запустить"}
+          </Button>
+        )}
+        {!running && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onDebugRun}
+            disabled={!canRun}
+          >
+            ▶ Пошагово
+          </Button>
+        )}
       </span>
     </header>
   );

@@ -120,7 +120,9 @@ async fn run(path: &std::path::Path) -> ExitCode {
     };
 
     let executor = RobotExecutor::new(default_registry());
-    let report = executor.execute(&robot, CancellationToken::new()).await;
+    let report = executor
+        .execute(0, &robot, CancellationToken::new(), None)
+        .await;
 
     match serde_json::to_string_pretty(&report) {
         Ok(json) => {

@@ -9,12 +9,14 @@
 //! - `executor` — линейное исполнение шагов с `ExecutionReport`.
 //! - `tools` — универсальный `HttpTool` и сборка default-реестра.
 
+pub mod debug;
 pub mod executor;
 pub mod interpolate;
 pub mod robot;
 pub mod tools;
 
-pub use executor::{ExecutionReport, ReportStatus, RobotExecutor, StepResult};
+pub use debug::{DebugController, StepAction};
+pub use executor::{ContextStore, ExecutionReport, ReportStatus, RobotExecutor, StepResult};
 pub use interpolate::interpolate;
 pub use robot::{Robot, Step};
 pub use tools::{HttpInput, HttpOutput, HttpTool, default_registry};

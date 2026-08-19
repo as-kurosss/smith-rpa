@@ -12,6 +12,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { ActionNode } from "./components/ActionNode";
+import { DebugConsole } from "./components/DebugConsole";
 import { NodePalette } from "./components/NodePalette";
 import { PropertyPanel } from "./components/PropertyPanel";
 import { RunLogs } from "./components/RunLogs";
@@ -47,6 +48,11 @@ export default function App() {
   const [report, setReport] = useState<ExecutionReportView | null>(null);
   const [history, setHistory] = useState<JobView[]>([]);
   const [runError, setRunError] = useState<string | null>(null);
+  // Пошаговая отладка.
+  const [debugMode, setDebugMode] = useState(false);
+  const [breakpoints, setBreakpoints] = useState<Set<number>>(new Set());
+  const [debugCurrentStep, setDebugCurrentStep] = useState<number | null>(null);
+  const [debugPaused, setDebugPaused] = useState(false);
 
   const selectedNode = useMemo(
     () => nodes.find((node) => node.id === selectedId) ?? null,
@@ -129,6 +135,84 @@ export default function App() {
     setStatus("Шаг удалён");
   }, []);
 
+  // --- Пошаговая отладка ---------------------------------------------------
+
+  const toggleBreakpoint = useCallback((stepIndex: number) => {
+    setBreakpoints((prev) => {
+      const next = new Set(prev);
+      if (next.has(stepIndex)) {
+        next.delete(stepIndex);
+      } else {
+        next.add(stepIndex);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDebugRun = useCallback(async () => {
+    const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
+    setRunError(null);
+    try {
+      const id = await invoke<number>("run_debug", { json: serializeRobot(robot) });
+      // Отправляем breakpoints сразу после запуска.
+      if (breakpoints.size > 0) {
+        await invoke("set_breakpoints", {
+          id,
+          breakpoints: Array.from(breakpoints).sort((a, b) => a - b),
+        });
+      }
+      setCurrentJobId(id);
+      setJobStatus("paused");
+      setDebugMode(true);
+      setDebugPaused(true);
+      setDebugCurrentStep(0);
+      setReport(null);
+      setStatus(`Отладка: #${id} (пауза на шаге 1)`);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error));
+      setStatus("Ошибка запуска отладки");
+    }
+  }, [nodes, robotName, version, breakpoints]);
+
+  const handleResume = useCallback(async () => {
+    if (currentJobId === null) return;
+    try {
+      await invoke("resume_execution", { id: currentJobId });
+      setDebugPaused(false);
+      setStatus(`Отладка #${currentJobId}: выполнение…`);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentJobId]);
+
+  const handleStepOver = useCallback(async () => {
+    if (currentJobId === null) return;
+    try {
+      await invoke("step_over", { id: currentJobId });
+      setDebugPaused(false);
+      setStatus(`Отладка #${currentJobId}: шаг…`);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentJobId]);
+
+  // Поллинг debug_status пока debugMode активен.
+  useEffect(() => {
+    if (!debugMode || currentJobId === null) return;
+    const timer = window.setInterval(() => {
+      invoke<{ current_step: number; is_paused: boolean } | null>("debug_status", {
+        id: currentJobId,
+      })
+        .then((ds) => {
+          if (ds === null) return;
+          setDebugCurrentStep(ds.current_step);
+          setDebugPaused(ds.is_paused);
+        })
+        .catch(() => {});
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [debugMode, currentJobId]);
+
   const handleSave = useCallback(async () => {
     const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
     const defaultName = `${robot.name.replace(/[^\wа-яА-Я-]+/g, "_")}.robot.json`;
@@ -176,6 +260,9 @@ export default function App() {
   const handleRun = useCallback(async () => {
     const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
     setRunError(null);
+    setDebugMode(false);
+    setDebugPaused(false);
+    setDebugCurrentStep(null);
     try {
       const id = await invoke<number>("run_robot", { json: serializeRobot(robot) });
       setCurrentJobId(id);
@@ -194,6 +281,9 @@ export default function App() {
     }
     try {
       await invoke("cancel_job", { id: currentJobId });
+      setDebugMode(false);
+      setDebugPaused(false);
+      setDebugCurrentStep(null);
       setStatus(`Отмена запрошена: #${currentJobId}`);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : String(error));
@@ -215,8 +305,14 @@ export default function App() {
           if (job.report) {
             setReport(job.report);
           }
-          if (isTerminal(job.status)) {
-            setCurrentJobId(null);
+          // В debug-режиме paused — это нормальное состояние (ждёт действия).
+          if (isTerminal(job.status) || (debugMode && job.status === "paused")) {
+            if (isTerminal(job.status)) {
+              setCurrentJobId(null);
+              setDebugMode(false);
+              setDebugPaused(false);
+              setDebugCurrentStep(null);
+            }
             setStatus(`Запуск #${job.id}: ${job.status}`);
             refreshHistory();
           }
@@ -224,7 +320,7 @@ export default function App() {
         .catch((error: unknown) => setRunError(String(error)));
     }, 400);
     return () => window.clearInterval(timer);
-  }, [currentJobId, refreshHistory]);
+  }, [currentJobId, refreshHistory, debugMode]);
 
   // История запусков при старте студии.
   useEffect(() => {
@@ -242,8 +338,13 @@ export default function App() {
         onLoad={handleLoad}
         onRun={handleRun}
         onCancel={handleCancel}
+        onDebugRun={handleDebugRun}
+        onResume={handleResume}
+        onStepOver={handleStepOver}
         canRun={nodes.length > 0}
         running={currentJobId !== null}
+        debugMode={debugMode}
+        isPaused={debugPaused}
       />
 
       {loadError && (
@@ -257,7 +358,16 @@ export default function App() {
 
         <main className="h-full flex-1">
           <ReactFlow
-            nodes={nodes}
+            nodes={nodes.map((node) => ({
+              ...node,
+              data: {
+                ...stepData(node),
+                breakpoint: breakpoints.has(stepData(node).index),
+                currentStep: debugCurrentStep,
+                debugMode,
+                onToggleBreakpoint: toggleBreakpoint,
+              },
+            }))}
             edges={edges}
             onNodesChange={onNodesChange}
             nodeTypes={nodeTypes}
@@ -286,6 +396,8 @@ export default function App() {
       )}
 
       <RunLogs jobStatus={jobStatus} report={report} history={history} />
+
+      <DebugConsole currentJobId={currentJobId} />
 
       <footer className="border-t border-slate-200 bg-white px-4 py-1 text-xs text-slate-500">
         {status} · {nodes.length} шагов

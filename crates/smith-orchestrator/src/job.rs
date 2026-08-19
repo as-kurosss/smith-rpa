@@ -27,6 +27,8 @@ pub enum JobStatus {
     Failed,
     /// Отменён через токен отмены.
     Cancelled,
+    /// Приостановлен (пошаговая отладка).
+    Paused,
 }
 
 /// Запись о запуске робота.
@@ -82,6 +84,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&JobStatus::Cancelled).unwrap(),
             "\"cancelled\""
+        );
+        assert_eq!(
+            serde_json::to_string(&JobStatus::Paused).unwrap(),
+            "\"paused\""
         );
     }
 }

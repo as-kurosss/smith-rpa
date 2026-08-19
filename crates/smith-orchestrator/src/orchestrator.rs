@@ -5,13 +5,13 @@
 //! `RobotExecutor`. Отмена (`cancel`) аннулирует токен; исполнитель
 //! останавливается на ближайшей границе шага и фиксирует `Cancelled`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::SystemTime;
 
-use smith_core::ToolRegistry;
-use smith_engine::{ReportStatus, Robot, RobotExecutor};
+use smith_core::{ContextMap, ToolRegistry};
+use smith_engine::{DebugController, ReportStatus, Robot, RobotExecutor};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
@@ -29,10 +29,12 @@ pub enum OrchestratorError {
     JobAlreadyFinished { id: u64 },
 }
 
-/// Объединённое состояние: jobs + tokens в одном Mutex.
+/// Объединённое состояние: jobs + tokens + debug controllers в одном Mutex.
 struct OrchestratorState {
     jobs: HashMap<u64, Job>,
     tokens: HashMap<u64, CancellationToken>,
+    /// Контроллеры пошаговой отладки (только для debug-режима).
+    controllers: HashMap<u64, Arc<DebugController>>,
 }
 
 /// Внутреннее состояние оркестратора (разделяется через `Arc`).
@@ -58,6 +60,7 @@ impl Orchestrator {
                 state: Mutex::new(OrchestratorState {
                     jobs: HashMap::new(),
                     tokens: HashMap::new(),
+                    controllers: HashMap::new(),
                 }),
                 next_id: AtomicU64::new(0),
             }),
@@ -72,25 +75,21 @@ impl Orchestrator {
         let token = CancellationToken::new();
         let robot_name = robot.name.clone();
 
-        // Атомарная вставка job + token в один Mutex.
+        // Атомарная вставка job + token + статус Running в один Mutex.
         {
             let mut state = lock(&self.inner.state);
             state
                 .jobs
                 .insert(id, Job::queued(JobId(id), robot_name.clone()));
             state.tokens.insert(id, token.clone());
+            if let Some(job) = state.jobs.get_mut(&id) {
+                job.status = JobStatus::Running;
+            }
         }
 
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
-            {
-                let mut state = lock(&inner.state);
-                if let Some(job) = state.jobs.get_mut(&id) {
-                    job.status = JobStatus::Running;
-                }
-            }
-
-            let report = inner.executor.execute(&robot, token).await;
+            let report = inner.executor.execute(id, &robot, token, None).await;
 
             let status = match report.status {
                 ReportStatus::Success => JobStatus::Succeeded,
@@ -157,6 +156,150 @@ impl Orchestrator {
         let mut all: Vec<Job> = state.jobs.values().cloned().collect();
         all.sort_by_key(|job| job.id.0);
         all
+    }
+
+    /// Возвращает последний снимок контекста для указанного джоба.
+    #[must_use]
+    pub fn context_snapshot(&self, id: JobId) -> ContextMap {
+        let store = self.inner.executor.contexts();
+        if let Ok(snapshots) = store.lock()
+            && let Some(steps) = snapshots.get(&id.0)
+        {
+            return steps.last().cloned().unwrap_or_default();
+        }
+        ContextMap::new()
+    }
+
+    /// Запускает робота в пошаговом режиме (сразу ставит паузу на первом шаге).
+    ///
+    /// Возвращает `JobId`. Статус джоба: `Paused`. Фронтенд управляет
+    /// выполнением через `resume()` / `step_over()`.
+    pub fn submit_debug(&self, robot: Robot) -> JobId {
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let token = CancellationToken::new();
+        let robot_name = robot.name.clone();
+        let controller = Arc::new(DebugController::new(token.clone()));
+
+        // Ставим паузу сразу: executor остановится перед первым шагом.
+        controller.set_pause_after_step(true);
+
+        // Вставка job + token + controllers + статус Paused.
+        {
+            let mut state = lock(&self.inner.state);
+            state
+                .jobs
+                .insert(id, Job::queued(JobId(id), robot_name.clone()));
+            state.tokens.insert(id, token.clone());
+            state.controllers.insert(id, controller.clone());
+            if let Some(job) = state.jobs.get_mut(&id) {
+                job.status = JobStatus::Paused;
+            }
+        }
+
+        let inner = Arc::clone(&self.inner);
+        tokio::spawn(async move {
+            let report = inner
+                .executor
+                .execute(id, &robot, token, Some(controller))
+                .await;
+
+            let status = match report.status {
+                ReportStatus::Success => JobStatus::Succeeded,
+                ReportStatus::Failed => JobStatus::Failed,
+                ReportStatus::Cancelled => JobStatus::Cancelled,
+            };
+
+            {
+                let mut state = lock(&inner.state);
+                if let Some(job) = state.jobs.get_mut(&id) {
+                    job.status = status;
+                    job.report = Some(report);
+                    job.finished_at = Some(SystemTime::now());
+                }
+                state.tokens.remove(&id);
+                state.controllers.remove(&id);
+            }
+
+            debug!(job_id = id, status = ?status, "debug job finished");
+        });
+
+        debug!(job_id = id, robot = %robot_name, "debug job submitted");
+        JobId(id)
+    }
+
+    /// Снимает паузу и продолжает выполнение до следующей паузы или завершения.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает `JobNotFound`, если запуск не найден.
+    pub fn resume(&self, id: JobId) -> Result<(), OrchestratorError> {
+        let mut state = lock(&self.inner.state);
+        let Some(controller) = state.controllers.get(&id.0) else {
+            return Err(OrchestratorError::JobNotFound { id: id.0 });
+        };
+        controller.continue_execution();
+        // Обновляем статус на Running.
+        if let Some(job) = state.jobs.get_mut(&id.0)
+            && job.status == JobStatus::Paused
+        {
+            job.status = JobStatus::Running;
+        }
+        Ok(())
+    }
+
+    /// Снимает паузу и ставит паузу после следующего шага (step-over).
+    ///
+    /// # Errors
+    ///
+    /// Возвращает `JobNotFound`, если запуск не найден.
+    pub fn step_over(&self, id: JobId) -> Result<(), OrchestratorError> {
+        let mut state = lock(&self.inner.state);
+        let Some(controller) = state.controllers.get(&id.0) else {
+            return Err(OrchestratorError::JobNotFound { id: id.0 });
+        };
+        controller.step_over();
+        if let Some(job) = state.jobs.get_mut(&id.0)
+            && job.status == JobStatus::Paused
+        {
+            job.status = JobStatus::Running;
+        }
+        Ok(())
+    }
+
+    /// Устанавливает точки останова для запуска.
+    ///
+    /// # Errors
+    ///
+    /// Возвращает `JobNotFound`, если запуск не найден.
+    pub async fn set_breakpoints(
+        &self,
+        id: JobId,
+        breakpoints: HashSet<usize>,
+    ) -> Result<(), OrchestratorError> {
+        let controller = {
+            let state = lock(&self.inner.state);
+            state
+                .controllers
+                .get(&id.0)
+                .cloned()
+                .ok_or(OrchestratorError::JobNotFound { id: id.0 })?
+        };
+        controller.set_breakpoints(breakpoints).await;
+        Ok(())
+    }
+
+    /// Возвращает текущий индекс шага (0-based, «следующий к выполнению»).
+    #[must_use]
+    pub fn current_step(&self, id: JobId) -> Option<usize> {
+        let state = lock(&self.inner.state);
+        state.controllers.get(&id.0).map(|c| c.current_step())
+    }
+
+    /// Возвращает `true`, если запуск находится на паузе.
+    #[must_use]
+    pub fn is_paused(&self, id: JobId) -> Option<bool> {
+        let state = lock(&self.inner.state);
+        state.controllers.get(&id.0).map(|c| c.is_paused())
     }
 }
 
