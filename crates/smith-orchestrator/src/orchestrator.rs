@@ -174,7 +174,7 @@ impl Orchestrator {
     ///
     /// Возвращает `JobId`. Статус джоба: `Paused`. Фронтенд управляет
     /// выполнением через `resume()` / `step_over()`.
-    pub fn submit_debug(&self, robot: Robot) -> JobId {
+    pub async fn submit_debug(&self, robot: Robot, breakpoints: HashSet<usize>) -> JobId {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         let token = CancellationToken::new();
         let robot_name = robot.name.clone();
@@ -184,6 +184,9 @@ impl Orchestrator {
         controller.set_pause_after_step(true);
 
         // Вставка job + token + controllers + статус Paused.
+        // Breakpoints устанавливаются в том же lock — до spawn executor task,
+        // чтобы исключить race condition (executor завершается и удаляет
+        // контроллер до того, как set_breakpoints найдёт его).
         {
             let mut state = lock(&self.inner.state);
             state
@@ -195,6 +198,8 @@ impl Orchestrator {
                 job.status = JobStatus::Paused;
             }
         }
+        // Устанавливаем breakpoints в отдельном блоке (RwLock::write().await).
+        controller.set_breakpoints(breakpoints).await;
 
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {

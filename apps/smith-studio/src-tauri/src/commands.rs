@@ -78,10 +78,16 @@ pub fn save_file(path: String, content: String) -> Result<(), String> {
 // --- Пошаговая отладка -------------------------------------------------------
 
 /// Запускает робота в пошаговом режиме (сразу ставит паузу на первом шаге).
+/// Принимает breakpoints сразу — исключает race condition.
 #[tauri::command]
-pub async fn run_debug(state: State<'_, Orchestrator>, json: String) -> Result<u64, String> {
+pub async fn run_debug(
+    state: State<'_, Orchestrator>,
+    json: String,
+    breakpoints: Vec<usize>,
+) -> Result<u64, String> {
     let robot = Robot::from_json_str(&json).map_err(|e| e.to_string())?;
-    Ok(state.submit_debug(robot).0)
+    let bp: std::collections::HashSet<usize> = breakpoints.into_iter().collect();
+    Ok(state.submit_debug(robot, bp).await.0)
 }
 
 /// Устанавливает точки останова (индексы шагов) для запуска.

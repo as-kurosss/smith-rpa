@@ -9,7 +9,14 @@
         "command": "notepad.exe"
       },
       "outputs": {
-        "pid": "notepad"
+        "pid": "notepad",
+        "status": "notepad_status"
+      }
+    },
+    {
+      "action": "windows.click",
+      "params": {
+        "name": "Файл"
       }
     }
   ]

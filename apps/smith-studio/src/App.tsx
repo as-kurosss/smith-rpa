@@ -153,14 +153,12 @@ export default function App() {
     const robot = nodesToRobot(robotName.trim() || DEFAULT_NAME, version, nodes);
     setRunError(null);
     try {
-      const id = await invoke<number>("run_debug", { json: serializeRobot(robot) });
-      // Отправляем breakpoints сразу после запуска.
-      if (breakpoints.size > 0) {
-        await invoke("set_breakpoints", {
-          id,
-          breakpoints: Array.from(breakpoints).sort((a, b) => a - b),
-        });
-      }
+      // Breakpoints передаются сразу в run_debug — без race condition.
+      const bp = Array.from(breakpoints).sort((a, b) => a - b);
+      const id = await invoke<number>("run_debug", {
+        json: serializeRobot(robot),
+        breakpoints: bp,
+      });
       setCurrentJobId(id);
       setJobStatus("paused");
       setDebugMode(true);
