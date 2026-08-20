@@ -176,7 +176,8 @@ export default function App() {
     if (currentJobId === null) return;
     try {
       await invoke("resume_execution", { id: currentJobId });
-      setDebugPaused(false);
+      // debugPaused обновляется polling debug_status — не ставим вручную,
+      // чтобы избежать race condition с get_job polling.
       setStatus(`Отладка #${currentJobId}: выполнение…`);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : String(error));
@@ -187,7 +188,7 @@ export default function App() {
     if (currentJobId === null) return;
     try {
       await invoke("step_over", { id: currentJobId });
-      setDebugPaused(false);
+      // debugPaused обновляется polling debug_status.
       setStatus(`Отладка #${currentJobId}: шаг…`);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : String(error));
@@ -317,22 +318,19 @@ export default function App() {
           if (job.report) {
             setReport(job.report);
           }
-          // В debug-режиме paused — это нормальное состояние (ждёт действия).
-          if (isTerminal(job.status) || (debugMode && job.status === "paused")) {
-            if (isTerminal(job.status)) {
-              setCurrentJobId(null);
-              setDebugMode(false);
-              setDebugPaused(false);
-              setDebugCurrentStep(null);
-            }
-            setStatus(`Запуск #${job.id}: ${job.status}`);
-            refreshHistory();
+          if (isTerminal(job.status)) {
+            setCurrentJobId(null);
+            setDebugMode(false);
+            setDebugPaused(false);
+            setDebugCurrentStep(null);
           }
+          setStatus(`Запуск #${job.id}: ${job.status}`);
+          refreshHistory();
         })
         .catch((error: unknown) => setRunError(String(error)));
     }, 400);
     return () => window.clearInterval(timer);
-  }, [currentJobId, refreshHistory, debugMode]);
+  }, [currentJobId, refreshHistory]);
 
   // История запусков при старте студии.
   useEffect(() => {

@@ -222,7 +222,8 @@ impl Orchestrator {
                     job.finished_at = Some(SystemTime::now());
                 }
                 state.tokens.remove(&id);
-                state.controllers.remove(&id);
+                // Контроллер НЕ удаляется: debug_status должен возвращать
+                // валидные данные даже после завершения джоба ( UI polling ).
             }
 
             debug!(job_id = id, status = ?status, "debug job finished");
