@@ -147,11 +147,14 @@ impl RobotExecutor {
                 break;
             }
 
-            // Пошаговая отладка: пауза перед выполнением шага.
-            if let Some(dc) = &debug
-                && dc.should_continue(idx).await == StepAction::Pause
-            {
-                break;
+            // Пошаговая отладка: обновить текущий шаг И ПРОВЕРИТЬ breakpoint.
+            // update_step(idx) вызывается ДО should_continue, чтобы
+            // current_step всегда отражал индекс следующего шага (включая паузу).
+            if let Some(dc) = &debug {
+                dc.update_step(idx);
+                if dc.should_continue(idx).await == StepAction::Pause {
+                    break;
+                }
             }
 
             let params = interpolate::interpolate_value(&step.params, &ctx);
