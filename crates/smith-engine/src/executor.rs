@@ -147,14 +147,17 @@ impl RobotExecutor {
                 break;
             }
 
-            // Пошаговая отладка: обновить текущий шаг И ПРОВЕРИТЬ breakpoint.
-            // update_step(idx) вызывается ДО should_continue, чтобы
-            // current_step всегда отражал индекс следующего шага (включая паузу).
+            // Пошаговая отладка: проверяем breakpoint / паузу.
+            // update_step(idx) вызывается ПОСЛЕ should_continue, чтобы
+            // current_step отражал индекс выполняющегося шага.
             if let Some(dc) = &debug {
-                dc.update_step(idx);
+                tracing::info!(job_id, idx, action = %step.action, "debug: before should_continue");
                 if dc.should_continue(idx).await == StepAction::Pause {
+                    tracing::info!(job_id, idx, "debug: paused at step {idx}");
                     break;
                 }
+                dc.update_step(idx);
+                tracing::info!(job_id, idx, "debug: executing step {idx}");
             }
 
             let params = interpolate::interpolate_value(&step.params, &ctx);
@@ -206,12 +209,13 @@ impl RobotExecutor {
                         error: None,
                     });
 
-                    // Пошаговая отладка: обновить текущий шаг и проверить step-over.
+                    // Пошаговая отладка: обновить текущий шаг.
+                    // check_step_over() устанавливает paused=true, но НЕ делает break —
+                    // цикл продолжается, и should_continue(idx+1) на следующей
+                    // итерации проверит breakpoint и поставит паузу.
                     if let Some(dc) = &debug {
                         dc.update_step(idx + 1);
-                        if dc.check_step_over() {
-                            break;
-                        }
+                        dc.check_step_over();
                     }
                 }
                 Err(err) => {

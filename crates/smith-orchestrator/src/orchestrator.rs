@@ -199,19 +199,28 @@ impl Orchestrator {
             }
         }
         // Устанавливаем breakpoints в отдельном блоке (RwLock::write().await).
+        tracing::info!(job_id = id, "submit_debug: about to set breakpoints");
         controller.set_breakpoints(breakpoints).await;
+        tracing::info!(job_id = id, "submit_debug: breakpoints set, spawning executor");
 
         let inner = Arc::clone(&self.inner);
         tokio::spawn(async move {
             let report = inner
                 .executor
-                .execute(id, &robot, token, Some(controller))
+                .execute(id, &robot, token, Some(controller.clone()))
                 .await;
 
-            let status = match report.status {
-                ReportStatus::Success => JobStatus::Succeeded,
-                ReportStatus::Failed => JobStatus::Failed,
-                ReportStatus::Cancelled => JobStatus::Cancelled,
+            // Если executor на паузе (breakpoint/step-over) — НЕ перезаписываем
+            // статус Paused. Executor возвращает Success когда делает break
+            // из-за паузы, но джоб всё ещё на паузе.
+            let status = if controller.is_paused() {
+                JobStatus::Paused
+            } else {
+                match report.status {
+                    ReportStatus::Success => JobStatus::Succeeded,
+                    ReportStatus::Failed => JobStatus::Failed,
+                    ReportStatus::Cancelled => JobStatus::Cancelled,
+                }
             };
 
             {
@@ -219,7 +228,11 @@ impl Orchestrator {
                 if let Some(job) = state.jobs.get_mut(&id) {
                     job.status = status;
                     job.report = Some(report);
-                    job.finished_at = Some(SystemTime::now());
+                    job.finished_at = if controller.is_paused() {
+                        None
+                    } else {
+                        Some(SystemTime::now())
+                    };
                 }
                 state.tokens.remove(&id);
                 // Контроллер НЕ удаляется: debug_status должен возвращать
@@ -566,5 +579,61 @@ mod tests {
         let ids: Vec<u64> = history.iter().map(|job| job.id.0).collect();
         assert_eq!(ids, vec![a.0, b.0]);
         assert!(history.iter().all(|job| job.status == JobStatus::Succeeded));
+    }
+
+    #[tokio::test]
+    async fn test_submit_debug_with_breakpoint_pauses_at_step() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new("debug"))
+            .with_test_writer()
+            .try_init();
+        let orchestrator = Orchestrator::new(test_registry());
+        let mut bp = HashSet::new();
+        bp.insert(1); // Breakpoint на шаге 1
+        let id = orchestrator
+            .submit_debug(
+                robot(
+                    "bp",
+                    &[
+                        ("test.echo", json!({"text": "step0"})),
+                        ("test.echo", json!({"text": "step1"})),
+                        ("test.echo", json!({"text": "step2"})),
+                    ],
+                ),
+                bp,
+            )
+            .await;
+
+        // Ждём, пока executor выполнит шаг 0 и поставит паузу.
+        // current_step должно стать 1 (следующий к выполнению).
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if orchestrator.current_step(id) == Some(1) && orchestrator.is_paused(id) == Some(true) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("executor should pause at step 1 after first step");
+        tracing::info!("test: paused after submit_debug, step=1");
+
+        // Step-over: выполняет шаг 1 (breakpoint), ставит паузу.
+        // current_step остаётся 1 (breakpoint срабатывает до update_step).
+        orchestrator.step_over(id).expect("step_over");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if orchestrator.current_step(id) == Some(1) && orchestrator.is_paused(id) == Some(true) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("executor should pause at breakpoint on step 1");
+
+        // Resume: выполняет шаг 2 и завершает.
+        orchestrator.resume(id).expect("resume");
+        wait_for_status(&orchestrator, id, JobStatus::Succeeded).await;
     }
 }

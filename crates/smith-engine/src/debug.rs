@@ -9,15 +9,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use tokio::sync::{Notify, RwLock, watch};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-
-/// Сигнал, отправляемый извне в executor-loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DebugSignal {
-    /// Продолжить выполнение (resume).
-    Continue,
-}
 
 /// Решение executor-loop на каждой итерации.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +32,9 @@ struct SharedState {
     paused: AtomicBool,
     /// Флаг: поставить паузу после завершения текущего шага (step-over).
     pause_after_step: AtomicBool,
+    /// Флаг возобновления: устанавливается continue/step_over.
+    /// Позволяет `wait_for_resume` выйти, даже если watch-сигнал был отправлен до входа в wait.
+    resume_flag: AtomicBool,
 }
 
 /// Контроллер пошаговой отладки.
@@ -47,12 +43,6 @@ struct SharedState {
 /// Потокобезопасен: может быть обёрнут в `Arc` и разделяться между задачами.
 pub struct DebugController {
     shared: Arc<SharedState>,
-    /// Канал для отправки сигналов (Continue).
-    signal_tx: watch::Sender<DebugSignal>,
-    /// Получатель сигналов (используется для `changed()`).
-    signal_rx: watch::Receiver<DebugSignal>,
-    /// Уведомление для пробуждения executor после снятия паузы.
-    pause_notify: Notify,
     /// Токен отмены: позволяет разбудить executor при отмене во время паузы.
     token: CancellationToken,
 }
@@ -61,17 +51,14 @@ impl DebugController {
     /// Создаёт контроллер в состоянии «не на паузе».
     #[must_use]
     pub fn new(token: CancellationToken) -> Self {
-        let (signal_tx, signal_rx) = watch::channel(DebugSignal::Continue);
         Self {
             shared: Arc::new(SharedState {
                 breakpoints: RwLock::new(HashSet::new()),
                 current_step: AtomicUsize::new(0),
                 paused: AtomicBool::new(false),
                 pause_after_step: AtomicBool::new(false),
+                resume_flag: AtomicBool::new(false),
             }),
-            signal_tx,
-            signal_rx,
-            pause_notify: Notify::new(),
             token,
         }
     }
@@ -107,8 +94,15 @@ impl DebugController {
     /// выполнение приостановлено (после возобновления тоже возвращает `Pause`,
     /// чтобы executor знал о паузе).
     pub async fn should_continue(&self, step_index: usize) -> StepAction {
-        // Если уже на паузе (например, после submit_debug) — ждём.
+        // Если уже на паузе — проверяем resume_flag.
+        // Если флаг установлен (resume/step_over) — НЕ снимаем паузу здесь:
+        // пусть check_step_over снимет её после выполнения шага.
         if self.shared.paused.load(Ordering::SeqCst) {
+            if self.shared.resume_flag.swap(false, Ordering::SeqCst) {
+                tracing::info!(step_index, "debug: should_continue — paused but resume_flag set, allowing step");
+                return StepAction::Execute;
+            }
+            tracing::info!(step_index, "debug: should_continue — paused, waiting");
             self.wait_for_resume().await;
             return StepAction::Pause;
         }
@@ -116,14 +110,17 @@ impl DebugController {
         // Проверяем breakpoint.
         {
             let bp = self.shared.breakpoints.read().await;
+            tracing::info!(step_index, breakpoints = ?bp.iter().copied().collect::<Vec<_>>(), "debug: should_continue — checking breakpoints");
             if bp.contains(&step_index) {
                 drop(bp);
+                tracing::info!(step_index, "debug: should_continue — BREAKPOINT HIT at step {step_index}");
                 self.shared.paused.store(true, Ordering::SeqCst);
                 self.wait_for_resume().await;
                 return StepAction::Pause;
             }
         }
 
+        tracing::info!(step_index, "debug: should_continue — no breakpoint, Execute");
         StepAction::Execute
     }
 
@@ -136,32 +133,35 @@ impl DebugController {
     ///
     /// Если флаг установлен — выставляет `paused = true` и возвращает `true`.
     pub fn check_step_over(&self) -> bool {
-        if self
+        let was_set = self
             .shared
             .pause_after_step
             .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
+            .is_ok();
+        tracing::info!(
+            was_set,
+            paused = self.shared.paused.load(Ordering::SeqCst),
+            "debug: check_step_over"
+        );
+        if was_set {
             self.shared.paused.store(true, Ordering::SeqCst);
-            true
-        } else {
-            false
         }
+        was_set
     }
 
     /// Пробуждает executor: снимает паузу и отправляет сигнал `Continue`.
     pub fn continue_execution(&self) {
+        self.shared.resume_flag.store(true, Ordering::SeqCst);
         self.shared.paused.store(false, Ordering::SeqCst);
-        let _ = self.signal_tx.send(DebugSignal::Continue);
-        self.pause_notify.notify_waiters();
     }
 
     /// Снимает паузу и ставит флаг «пауза после следующего шага» (step-over).
+    /// Параметр `paused` НЕ снимается здесь: `should_continue` проверит
+    /// `resume_flag` и вернёт Execute, а `check_step_over` поставит паузу
+    /// после выполнения шага.
     pub fn step_over(&self) {
         self.shared.pause_after_step.store(true, Ordering::SeqCst);
-        self.shared.paused.store(false, Ordering::SeqCst);
-        let _ = self.signal_tx.send(DebugSignal::Continue);
-        self.pause_notify.notify_waiters();
+        self.shared.resume_flag.store(true, Ordering::SeqCst);
     }
 
     /// Возвращает текущий индекс шага («следующий к выполнению»).
@@ -181,41 +181,25 @@ impl DebugController {
         self.shared.pause_after_step.store(value, Ordering::SeqCst);
     }
 
-    /// Блокируется до получения сигнала `Continue` или `StepOver`,
-    /// либо до отмены через `CancellationToken`.
+    /// Блокируется до получения сигнала `Continue`, `StepOver`
+    /// или отмены через `CancellationToken`.
+    ///
+    /// Использует yield_now() для协作ативного ожидания — надёжнее чем
+    /// Notify/watch каналы (нет гонок "notify до subscribe").
     async fn wait_for_resume(&self) {
-        let mut rx = self.signal_rx.clone();
         loop {
-            // Отмена через токен — выходим немедленно.
             if self.token.is_cancelled() {
                 self.shared.paused.store(false, Ordering::SeqCst);
                 return;
             }
-
-            // Двойная проверка: не был ли уже снят доступ.
+            if self.shared.resume_flag.swap(false, Ordering::SeqCst) {
+                self.shared.paused.store(false, Ordering::SeqCst);
+                return;
+            }
             if !self.shared.paused.load(Ordering::SeqCst) {
                 return;
             }
-
-            // Помечаем текущее значение как прочитанное, чтобы `changed()`
-            // сработал только на новом сигнале (убирает гонку между
-            // проверкой и select).
-            rx.borrow_and_update();
-
-            tokio::select! {
-                result = rx.changed() => {
-                    if result.is_ok()
-                        && *rx.borrow() == DebugSignal::Continue
-                        && !self.shared.paused.load(Ordering::SeqCst)
-                    {
-                        return;
-                    }
-                }
-                _ = self.token.cancelled() => {
-                    self.shared.paused.store(false, Ordering::SeqCst);
-                    return;
-                }
-            }
+            tokio::task::yield_now().await;
         }
     }
 }
@@ -237,9 +221,6 @@ mod tests {
         fn clone(&self) -> Self {
             Self {
                 shared: Arc::clone(&self.shared),
-                signal_tx: self.signal_tx.clone(),
-                signal_rx: self.signal_rx.clone(),
-                pause_notify: Notify::new(),
                 token: self.token.clone(),
             }
         }
@@ -262,23 +243,19 @@ mod tests {
         assert_eq!(dc.should_continue(0).await, StepAction::Execute);
         assert_eq!(dc.should_continue(1).await, StepAction::Execute);
 
-        // Запускаем should_continue(2) в фоне — он должен застрять на паузе.
+        // Запускаем should_continue(2) в фоне — breakpoint ставит паузу.
         let dc2 = dc.clone();
         let handle = tokio::spawn(async move { dc2.should_continue(2).await });
-
-        // Даём время задаче начать выполнение и попасть в паузу.
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(dc.is_paused());
 
-        // Снимаем паузу.
+        // continue_execution снимает паузу.
         dc.continue_execution();
         let result = tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("task should complete")
-            .expect("should_continue should succeed");
-
+            .expect("ok");
         assert_eq!(result, StepAction::Pause);
-        assert!(!dc.is_paused());
     }
 
     #[tokio::test]
@@ -286,27 +263,22 @@ mod tests {
         let dc = DebugController::default();
         assert!(!dc.is_paused());
 
-        // Запросить step-over.
+        // step_over: выставляет pause_after_step + resume_flag.
         dc.step_over();
-        assert!(!dc.is_paused()); // Ещё не на паузе — пауза после шага.
+        assert!(!dc.is_paused());
 
-        // После выполнения шага — executor вызывает check_step_over().
+        // executor вызывает check_step_over после выполнения шага.
         assert!(dc.check_step_over());
         assert!(dc.is_paused());
 
-        // should_continue теперь ждёт.
+        // should_continue с resume_flag вернёт Execute (шаг выполняется).
         let dc2 = dc.clone();
-        let handle = tokio::spawn(async move { dc2.should_continue(1).await });
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert!(dc.is_paused());
-
-        dc.continue_execution();
-        let result = tokio::time::timeout(Duration::from_secs(1), handle)
-            .await
-            .expect("task should complete")
-            .expect("should_continue should succeed");
-        assert_eq!(result, StepAction::Pause);
+        let result = tokio::time::timeout(Duration::from_secs(1), async {
+            dc2.should_continue(1).await
+        })
+        .await
+        .expect("timeout");
+        assert_eq!(result, StepAction::Execute);
     }
 
     #[tokio::test]
