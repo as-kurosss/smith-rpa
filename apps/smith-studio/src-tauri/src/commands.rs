@@ -1,118 +1,129 @@
-//! Tauri-команды студии.
-//!
-//! M4: проверка связи и валидация JSON-модели робота.
-//! M5: запуск/отмена/история через smith-orchestrator.
-//! Debug: пошаговая отладка с breakpoints.
-
-use std::fs;
+//! Tauri-команды: проксируют вызовы в Python-сервер через HTTP.
 
 use serde::Serialize;
-use serde_json::Value;
-use smith_core::ContextMap;
-use smith_engine::Robot;
-use smith_orchestrator::{Job, JobId, Orchestrator};
+use serde_json::{json, Value};
 use tauri::State;
+
+use crate::server::AppState;
 
 /// Проверка доступности backend.
 #[tauri::command]
-pub fn health() -> String {
-    "ok".into()
+pub fn health(state: State<'_, AppState>) -> Result<String, String> {
+    state.proxy_get("/health")?;
+    Ok("ok".into())
 }
 
 /// Парсит и валидирует JSON-модель робота.
-///
-/// # Errors
-///
-/// Возвращает строку с описанием ошибки, если JSON не корректен.
 #[tauri::command]
-pub fn parse_robot(json: String) -> Result<Value, String> {
-    let robot = Robot::from_json_str(&json).map_err(|e| e.to_string())?;
-    serde_json::to_value(robot).map_err(|e| e.to_string())
+pub fn parse_robot(state: State<'_, AppState>, json: String) -> Result<Value, String> {
+    state.proxy_post("/parse-robot", &json!({"robot_json": json}))
 }
 
 /// Запускает робота из JSON-строки и возвращает `JobId`.
-///
-/// # Errors
-///
-/// Возвращает строку с описанием ошибки, если JSON не корректен.
 #[tauri::command]
-pub async fn run_robot(state: State<'_, Orchestrator>, json: String) -> Result<u64, String> {
-    let robot = Robot::from_json_str(&json).map_err(|e| e.to_string())?;
-    Ok(state.submit(robot).0)
+pub fn run_robot(state: State<'_, AppState>, json: String) -> Result<u64, String> {
+    let robot: Value =
+        serde_json::from_str(&json).map_err(|e| format!("Invalid robot JSON: {e}"))?;
+    let result = state.proxy_post("/run-robot", &json!({"robot": robot}))?;
+    result["job_id"]
+        .as_u64()
+        .ok_or_else(|| "Missing job_id in response".into())
 }
 
 /// Отменяет запуск по `JobId`.
-///
-/// # Errors
-///
-/// Возвращает строку с описанием ошибки, если запуск не найден или завершён.
 #[tauri::command]
-pub fn cancel_job(state: State<'_, Orchestrator>, id: u64) -> Result<(), String> {
-    state.cancel(JobId(id)).map_err(|e| e.to_string())
+pub fn cancel_job(state: State<'_, AppState>, id: u64) -> Result<(), String> {
+    state.proxy_post(&format!("/cancel-job/{id}"), &json!({}))?;
+    Ok(())
 }
 
 /// Возвращает текущее состояние запуска по `JobId` (или `None`).
 #[tauri::command]
-pub fn get_job(state: State<'_, Orchestrator>, id: u64) -> Result<Option<Job>, String> {
-    Ok(state.get(JobId(id)))
+pub fn get_job(state: State<'_, AppState>, id: u64) -> Result<Option<Value>, String> {
+    match state.proxy_get(&format!("/job/{id}")) {
+        Ok(val) => {
+            if val.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(val))
+            }
+        }
+        Err(e) => {
+            if e.contains("404") {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 /// Возвращает историю всех запусков.
 #[tauri::command]
-pub fn get_history(state: State<'_, Orchestrator>) -> Result<Vec<Job>, String> {
-    Ok(state.history())
+pub fn get_history(state: State<'_, AppState>) -> Result<Vec<Value>, String> {
+    let val = state.proxy_get("/history")?;
+    val.as_array()
+        .cloned()
+        .ok_or_else(|| "Expected array".into())
 }
 
 /// Возвращает снимок контекста для указанного джоба.
 #[tauri::command]
-pub fn get_context_vars(state: State<'_, Orchestrator>, id: u64) -> ContextMap {
-    state.context_snapshot(JobId(id))
+pub fn get_context_vars(state: State<'_, AppState>, id: u64) -> Result<Value, String> {
+    state.proxy_get(&format!("/context/{id}"))
 }
 
 /// Сохраняет текст в файл по указанному пути.
 #[tauri::command]
-pub fn save_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content.as_bytes()).map_err(|e| format!("Ошибка записи: {e}"))
+pub fn save_file(state: State<'_, AppState>, path: String, content: String) -> Result<(), String> {
+    state.proxy_post("/save-file", &json!({"path": path, "content": content}))?;
+    Ok(())
 }
 
-// --- Пошаговая отладка -------------------------------------------------------
-
 /// Запускает робота в пошаговом режиме (сразу ставит паузу на первом шаге).
-/// Принимает breakpoints сразу — исключает race condition.
 #[tauri::command]
-pub async fn run_debug(
-    state: State<'_, Orchestrator>,
+pub fn run_debug(
+    state: State<'_, AppState>,
     json: String,
     breakpoints: Vec<usize>,
 ) -> Result<u64, String> {
-    let robot = Robot::from_json_str(&json).map_err(|e| e.to_string())?;
-    let bp: std::collections::HashSet<usize> = breakpoints.into_iter().collect();
-    Ok(state.submit_debug(robot, bp).await.0)
+    let robot: Value =
+        serde_json::from_str(&json).map_err(|e| format!("Invalid robot JSON: {e}"))?;
+    let result = state.proxy_post(
+        "/run-debug",
+        &json!({"robot": robot, "breakpoints": breakpoints}),
+    )?;
+    result["job_id"]
+        .as_u64()
+        .ok_or_else(|| "Missing job_id in response".into())
 }
 
 /// Устанавливает точки останова (индексы шагов) для запуска.
 #[tauri::command]
-pub async fn set_breakpoints(
-    state: State<'_, Orchestrator>,
+pub fn set_breakpoints(
+    state: State<'_, AppState>,
     id: u64,
     breakpoints: Vec<usize>,
 ) -> Result<(), String> {
-    state
-        .set_breakpoints(JobId(id), breakpoints.into_iter().collect())
-        .await
-        .map_err(|e| e.to_string())
+    state.proxy_post(
+        &format!("/set-breakpoints/{id}"),
+        &json!({"breakpoints": breakpoints}),
+    )?;
+    Ok(())
 }
 
 /// Снимает паузу и продолжает выполнение до следующей паузы или завершения.
 #[tauri::command]
-pub fn resume_execution(state: State<'_, Orchestrator>, id: u64) -> Result<(), String> {
-    state.resume(JobId(id)).map_err(|e| e.to_string())
+pub fn resume_execution(state: State<'_, AppState>, id: u64) -> Result<(), String> {
+    state.proxy_post(&format!("/resume/{id}"), &json!({}))?;
+    Ok(())
 }
 
 /// Снимает паузу и ставит паузу после следующего шага (step-over).
 #[tauri::command]
-pub fn step_over(state: State<'_, Orchestrator>, id: u64) -> Result<(), String> {
-    state.step_over(JobId(id)).map_err(|e| e.to_string())
+pub fn step_over(state: State<'_, AppState>, id: u64) -> Result<(), String> {
+    state.proxy_post(&format!("/step-over/{id}"), &json!({}))?;
+    Ok(())
 }
 
 /// Текущее состояние пошаговой отладки: индекс шага + на паузе ли.
@@ -125,16 +136,29 @@ pub struct DebugStatusView {
 /// Возвращает статус пошаговой отладки (индекс следующего шага + пауза).
 #[tauri::command]
 pub fn debug_status(
-    state: State<'_, Orchestrator>,
+    state: State<'_, AppState>,
     id: u64,
 ) -> Result<Option<DebugStatusView>, String> {
-    let step = state.current_step(JobId(id));
-    let paused = state.is_paused(JobId(id));
-    match (step, paused) {
-        (Some(step), Some(paused)) => Ok(Some(DebugStatusView {
-            current_step: step,
-            is_paused: paused,
-        })),
-        _ => Ok(None),
+    match state.proxy_get(&format!("/debug-status/{id}")) {
+        Ok(val) => {
+            if val.is_null() {
+                return Ok(None);
+            }
+            let current_step = val["current_step"]
+                .as_u64()
+                .unwrap_or(0) as usize;
+            let is_paused = val["is_paused"].as_bool().unwrap_or(false);
+            Ok(Some(DebugStatusView {
+                current_step,
+                is_paused,
+            }))
+        }
+        Err(e) => {
+            if e.contains("404") {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
     }
 }

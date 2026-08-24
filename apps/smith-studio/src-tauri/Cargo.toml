@@ -13,8 +13,5 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-smith-core = { version = "0.1.0", path = "../../../crates/smith-core" }
-smith-engine = { version = "0.1.0", path = "../../../crates/smith-engine" }
-smith-orchestrator = { version = "0.1.0", path = "../../../crates/smith-orchestrator" }
+reqwest = { workspace = true }
 tauri-plugin-dialog = "2.7.2"
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
